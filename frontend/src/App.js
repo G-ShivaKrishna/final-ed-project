@@ -1,10 +1,11 @@
-import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Signup from './Signup';
 import Login from './Login';
 import StudentDashboard from './student/StudentDashboard';
 import InstructorDashboard from './instructor/InstructorDashboard';
 import { useState, useEffect } from 'react';
 import supabase from './supabaseClient';
+import { useNavigate } from 'react-router-dom';
 
 function AppWrapper() {
   return (
@@ -17,7 +18,6 @@ function AppWrapper() {
 function App() {
   const [session, setSession] = useState(null);
   const [role, setRole] = useState(null);
-  const navigate = useNavigate(); // Add navigate
 
   useEffect(() => {
     const fetchSession = async () => {
@@ -51,12 +51,19 @@ function App() {
     return () => listener?.subscription?.unsubscribe();
   }, []);
 
-  const handleLogout = async () => {
+  const handleLogout = async (navigate) => {
     await supabase.auth.signOut();
     setSession(null);
     setRole(null);
-    navigate('/login', { replace: true }); // Navigate to login after logout
+    navigate('/login', { replace: true });
   };
+
+  return <RoutesWrapper session={session} role={role} onLogout={handleLogout} />;
+}
+
+// Separate component inside Router for using useNavigate
+function RoutesWrapper({ session, role, onLogout }) {
+  const navigate = useNavigate();
 
   return (
     <Routes>
@@ -78,9 +85,9 @@ function App() {
       <Route path="/login" element={!session ? <Login /> : <Navigate to="/" replace />} />
       <Route path="/signup" element={!session ? <Signup /> : <Navigate to="/" replace />} />
 
-      {/* Dashboards with logout */}
-      <Route path="/student-dashboard" element={<StudentDashboard onLogout={handleLogout} />} />
-      <Route path="/instructor-dashboard" element={<InstructorDashboard onLogout={handleLogout} />} />
+      {/* Dashboards */}
+      <Route path="/student-dashboard" element={<StudentDashboard onLogout={() => onLogout(navigate)} />} />
+      <Route path="/instructor-dashboard" element={<InstructorDashboard onLogout={() => onLogout(navigate)} />} />
     </Routes>
   );
 }

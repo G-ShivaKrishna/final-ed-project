@@ -178,7 +178,7 @@ export default function Login() {
         .message.success { color: var(--success); }
         @keyframes fadeMessage { to { opacity: 1; } }
         .navigation-link { margin-top: 1rem; font-size: 0.9rem; }
-        .link { color: var(--accent); text-decoration: underline; font-weight: 500; }
+        .link { color: var(--accent); text-decoration: None; font-weight: 500; }
         .link:hover { color: var(--accent-hover); }
       `}</style>
 
@@ -205,9 +205,10 @@ export default function Login() {
         {error && <div className="message error">{error}</div>}
         {message && <div className="message success">{message}</div>}
 
-        <div className="navigation-link">
-          Don't have an account? <Link to="/signup" className="link">Sign Up</Link>
-        </div>
+        <div className="navigation-link" style={{ color: 'white' }}>
+  Don't have an account? <Link to="/signup" className="link">Sign Up</Link>
+</div>
+
       </div>
     </div>
   );

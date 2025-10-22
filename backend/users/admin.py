@@ -3,5 +3,4 @@ from .models import SupabaseUser
 
 @admin.register(SupabaseUser)
 class SupabaseUserAdmin(admin.ModelAdmin):
-    list_display = ('username', 'role', 'created_at')
-    search_fields = ('username', 'role')
+    list_display = ('id', 'email', 'username', 'role', 'created_at')

@@ -1,81 +1,141 @@
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from django.utils import timezone
-from django.shortcuts import get_object_or_404
-from .models import SupabaseUser, Course, CourseInvitation
-from .serializers import CourseSerializer, CourseInvitationSerializer, SupabaseUserSerializer
-import uuid
-from django.core.mail import send_mail
-from django.conf import settings
-from rest_framework.permissions import IsAuthenticated
-from .permissions import IsInstructor, IsStudent
+from core.supabase_client import supabase
 
-class CourseViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated, IsInstructor]
-    queryset = Course.objects.all()
-    serializer_class = CourseSerializer
+@api_view(['GET'])
+def test_supabase(request):
+    data = supabase.table('users').select('*').execute()
+    return Response(data.data)
 
-    def perform_create(self, serializer):
-        instructor = self.request.user
-        serializer.save(instructor=instructor)
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from core.supabase_client import supabase
 
-    def get_queryset(self):
-        user = self.request.user
-        if user.role == 'instructor':
-            return Course.objects.filter(instructor=user)
-        return Course.objects.none()
+@api_view(['POST'])
+def create_course(request):
+    data = request.data
+    course_name = data.get('name')
+    course_id = data.get('course_id')
+    instructor_id = data.get('instructor_id')
 
+    if not course_name or not course_id or not instructor_id:
+        return Response({"error": "All fields are required"}, status=400)
 
-class StudentListViewSet(viewsets.ReadOnlyModelViewSet):
-    permission_classes = [IsAuthenticated, IsInstructor]  # Only instructors can list students
-    serializer_class = SupabaseUserSerializer
+    # Check if course_id already exists
+    existing = supabase.table('courses').select('course_id').eq('course_id', course_id).execute()
+    if existing.data and len(existing.data) > 0:
+        return Response({"error": f"Course ID '{course_id}' already exists."}, status=400)
 
-    def get_queryset(self):
-        return SupabaseUser.objects.filter(role='student')
+    # Insert into courses table
+    try:
+        result = supabase.table('courses').insert({
+            "name": course_name,
+            "course_id": course_id,
+            "instructor_id": instructor_id
+        }).execute()
+    except Exception as e:
+        if result.status_code != 201:
+            return Response({"error": result.data}, status=400)
 
+    return Response({"message": "Course created successfully"})
 
-class CourseInvitationViewSet(viewsets.ModelViewSet):
-    queryset = CourseInvitation.objects.all()
-    serializer_class = CourseInvitationSerializer
+# lms/views.py
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from core.supabase_client import supabase
 
-    def get_permissions(self):
-        if self.action == 'respond':
-            permission_classes = [IsAuthenticated, IsStudent]  # Students respond
+@api_view(['POST'])
+def join_course(request):
+    print("Received request.data type:", type(request.data))
+    print("Received request.data:", request.data)
+    data = request.data
+    course_id = data.get('course_id')
+    student_id = data.get('student_id')  # From JWT token or frontend
+
+    if not course_id or not student_id:
+        return Response({"error": "Both course_id and student_id are required"}, status=400)
+
+    # 1️⃣ Check if the course exists
+    course = supabase.table("courses").select("*").eq("course_id", course_id).execute()
+    if not course.data or len(course.data) == 0:
+        return Response({"error": f"Course ID '{course_id}' does not exist"}, status=404)
+
+    # 2️⃣ Check if student already enrolled in this course
+    enrollment = supabase.table("enrollments")\
+        .select("*")\
+        .eq("course_id", course_id)\
+        .eq("student_id", student_id)\
+        .execute()
+
+    if enrollment.data and len(enrollment.data) > 0:
+        return Response({"error": "Student already enrolled in this course"}, status=400)
+
+    # 3️⃣ Insert student into enrollments
+    try:
+        result = supabase.table("enrollments").insert({
+            "course_id": course_id,
+            "student_id": student_id
+        }).execute()
+    except Exception as e:
+        return Response({"error": str(e)}, status=400)
+
+    if not result.data or len(result.data) == 0:
+        return Response({"error": "Failed to enroll student"}, status=400)
+
+    return Response({"message": "Student successfully enrolled"})
+
+@api_view(['GET'])
+def instructor_courses(request):
+    instructor_id = request.GET.get('instructor_id')
+    if not instructor_id:
+        return Response({"error": "Instructor ID is required"}, status=400)
+
+    try:
+        response = supabase.table('courses').select('*').eq('instructor_id', instructor_id).execute()
+        courses = response.data if response.data else []
+        return Response(courses)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+# chat/views.py
+from django.http import JsonResponse
+import requests
+
+# Replace with your DeepSeek/OpenRouter API key
+API_KEY = "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"
+DEEPSEEK_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+from django.views.decorators.csrf import csrf_exempt
+import json
+
+@csrf_exempt
+def ask_ai(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Only POST allowed"}, status=405)
+    
+    try:
+        body = json.loads(request.body)
+        prompt = body.get("prompt")
+        if not prompt:
+            return JsonResponse({"answer": "Prompt is required"}, status=400)
+
+        # Call DeepSeek API
+        headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+        payload = {
+            "model": "deepseek/deepseek-chat-v3-0324",
+            "messages": [{"role": "user", "content": prompt}]
+        }
+        response = requests.post(DEEPSEEK_URL, headers=headers, json=payload)
+        data = response.json()
+
+        if "choices" in data and len(data["choices"]) > 0:
+            answer = data["choices"][0]["message"]["content"]
+            return JsonResponse({"answer": answer})
+        elif "error" in data:
+            return JsonResponse({"answer": f"Error: {data['error']['message']}"})
         else:
-            permission_classes = [IsAuthenticated, IsInstructor]  # Instructors create/manage
-        return [permission() for permission in permission_classes]
+            return JsonResponse({"answer": "No response from AI."})
+        
+    except Exception as e:
+        return JsonResponse({"answer": f"Server error: {str(e)}"}, status=500)
 
-    def perform_create(self, serializer):
-        invitation_token = uuid.uuid4()
-        invitation = serializer.save(invitation_token=invitation_token, sent_at=timezone.now())
 
-        student_email = invitation.student.username  # adjust if your email field differs
-        course_name = invitation.course.name
-        invite_link = f"{settings.FRONTEND_URL}/invitations/accept?token={invitation_token}"
-
-        send_mail(
-            subject=f"Invitation to join course: {course_name}",
-            message=f"You are invited to enroll in {course_name}. Click here to accept: {invite_link}",
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[student_email],
-            fail_silently=False,
-        )
-
-    @action(detail=False, methods=['post'])
-    def respond(self, request):
-        token = request.data.get('token')
-        response = request.data.get('response')
-
-        invitation = get_object_or_404(CourseInvitation, invitation_token=token)
-
-        if invitation.status != 'pending':
-            return Response({'detail': 'Already responded.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if response not in ['accepted', 'declined']:
-            return Response({'detail': 'Invalid response.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        invitation.status = response
-        invitation.responded_at = timezone.now()
-        invitation.save()
-        return Response({'detail': f'Invitation {response}.'})

@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'users',
     'rest_framework',
+    'corsheaders',
 ]
 
 MIDDLEWARE = [
@@ -49,8 +50,12 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
 ]
-
+# Allow requests from React
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+]
 ROOT_URLCONF = 'core.urls'
 
 TEMPLATES = [
@@ -128,15 +133,3 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-
-###################################3
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.gmail.com'             # SMTP server address
-EMAIL_PORT = 587                          # SMTP port for TLS
-EMAIL_USE_TLS = True                      # Use TLS encryption
-EMAIL_HOST_USER = 'reddyshivakrishna04@gmail.com'  # Your email address
-EMAIL_HOST_PASSWORD = 'bmxzehnztmzeztun' # Your email app password (not normal password)
-DEFAULT_FROM_EMAIL = 'noreply@gmail.com'  # Sender email
-FRONTEND_URL = 'http://localhost:3000'    # Your frontend app URL for email links
-##################################

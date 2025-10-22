@@ -1,12 +1,10 @@
-from django.urls import path, include
-from rest_framework.routers import DefaultRouter
-from .views import CourseViewSet, StudentListViewSet, CourseInvitationViewSet
-
-router = DefaultRouter()
-router.register(r'courses', CourseViewSet, basename='course')
-router.register(r'students', StudentListViewSet, basename='student')
-router.register(r'course-invitations', CourseInvitationViewSet, basename='courseinvitation')
+from django.urls import path
+from . import views
 
 urlpatterns = [
-    path('api/', include(router.urls)),
+    path('test-supabase/', views.test_supabase),
+    path('create-course/', views.create_course),
+    path('join-course/', views.join_course),
+    path('instructor-courses/', views.instructor_courses),
+    path('ask/', views.ask_ai, name='ask_ai'),
 ]
