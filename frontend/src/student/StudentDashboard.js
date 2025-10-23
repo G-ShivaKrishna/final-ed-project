@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
-import supabase from "../supabaseClient"; // adjust path if needed
-import ChatBox from "./ChatBot"; // both files are in the same folder
-
+import supabase from "../supabaseClient";
+import ChatBox from "./ChatBot";
 
 export default function StudentDashboard({ onLogout }) {
   const [activeTab, setActiveTab] = useState("profile");
@@ -11,7 +10,6 @@ export default function StudentDashboard({ onLogout }) {
 
   useEffect(() => {
     const fetchData = async () => {
-      // Get current user
       const { data: { session } } = await supabase.auth.getSession();
       const userId = session?.user?.id;
       if (!userId) return;
@@ -22,27 +20,21 @@ export default function StudentDashboard({ onLogout }) {
         .select("*")
         .eq("id", userId)
         .single();
-
-      if (profileError) console.error("Error fetching profile:", profileError);
-      else setUserProfile(profileData);
+      if (!profileError) setUserProfile(profileData);
 
       // Fetch enrolled courses
-      const { data: coursesData, error: coursesError } = await supabase
+      const { data: coursesData } = await supabase
         .from("courses")
         .select("*")
         .eq("user_id", userId);
+      setCourses(coursesData || []);
 
-      if (coursesError) console.error("Error fetching courses:", coursesError);
-      else setCourses(coursesData);
-
-      // Fetch progress data
-      const { data: progressData, error: progressError } = await supabase
+      // Fetch progress
+      const { data: progressData } = await supabase
         .from("progress")
         .select("*")
         .eq("user_id", userId);
-
-      if (progressError) console.error("Error fetching progress:", progressError);
-      else setProgress(progressData);
+      setProgress(progressData || []);
     };
 
     fetchData();
@@ -69,14 +61,13 @@ export default function StudentDashboard({ onLogout }) {
         </nav>
       </aside>
 
-      {/* Main Content */}
+      {/* Main content */}
       <main style={styles.main}>
         <button onClick={onLogout} style={styles.logoutBtn}>
           Logout
         </button>
 
         <div style={{ marginTop: "60px" }}>
-          {/* Profile Tab */}
           {activeTab === "profile" && (
             <div style={styles.card}>
               <h1 style={styles.cardTitle}>Profile</h1>
@@ -92,7 +83,6 @@ export default function StudentDashboard({ onLogout }) {
             </div>
           )}
 
-          {/* Courses Tab */}
           {activeTab === "courses" && (
             <div style={styles.card}>
               <h1 style={styles.cardTitle}>My Courses</h1>
@@ -108,7 +98,6 @@ export default function StudentDashboard({ onLogout }) {
             </div>
           )}
 
-          {/* Progress Tab */}
           {activeTab === "progress" && (
             <div style={styles.card}>
               <h1 style={styles.cardTitle}>Progress</h1>
@@ -126,64 +115,10 @@ export default function StudentDashboard({ onLogout }) {
             </div>
           )}
         </div>
-  <button onClick={onLogout} style={styles.logoutBtn}>
-    Logout
-  </button>
 
-  <div style={{ marginTop: "60px" }}>
-    {/* Profile, Courses, Progress Tabs */}
-    {activeTab === "profile" && (
-      <div style={styles.card}>
-        <h1 style={styles.cardTitle}>Profile</h1>
-        {userProfile ? (
-          <div style={styles.profileInfo}>
-            <p><strong>Username:</strong> {userProfile.username}</p>
-            <p><strong>Email:</strong> {userProfile.email}</p>
-            <p><strong>Joined:</strong> {new Date(userProfile.created_at).toLocaleDateString()}</p>
-          </div>
-        ) : (
-          <p>Loading profile...</p>
-        )}
-      </div>
-    )}
-
-    {activeTab === "courses" && (
-      <div style={styles.card}>
-        <h1 style={styles.cardTitle}>My Courses</h1>
-        {courses.length > 0 ? (
-          <ul style={styles.list}>
-            {courses.map((course) => (
-              <li key={course.id}>{course.name}</li>
-            ))}
-          </ul>
-        ) : (
-          <p>No courses found.</p>
-        )}
-      </div>
-    )}
-
-    {activeTab === "progress" && (
-      <div style={styles.card}>
-        <h1 style={styles.cardTitle}>Progress</h1>
-        {progress.length > 0 ? (
-          <ul style={styles.list}>
-            {progress.map((item) => (
-              <li key={item.id}>
-                {item.course_name} - {item.status}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p>No progress data found.</p>
-        )}
-      </div>
-    )}
-  </div>
-
-  {/* ChatBox Component */}
-  <ChatBox />
-</main>
-
+        {/* ChatBox */}
+        <ChatBox />
+      </main>
     </div>
   );
 }

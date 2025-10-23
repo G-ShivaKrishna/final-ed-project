@@ -62,7 +62,7 @@ export default function ChatBot() {
     <>
       {/* Floating Button */}
       <button className="chat-toggle-btn" onClick={toggleChat}>
-        AI
+        <img src="https://videos.openai.com/az/vg-assets/assets%2Ftask_01k86e1pkzep7r2ace8nnr6s2d%2F1761152717_img_0.webp?se=2025-10-29T04%3A21%3A41Z&sp=r&sv=2024-08-04&sr=b&skoid=1af02b11-169c-463d-b441-d2ccfc9f02c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2025-10-23T03%3A51%3A09Z&ske=2025-10-30T03%3A56%3A09Z&sks=b&skv=2024-08-04&sig=S3pnQyIzPMYAhEsViOunDvCQinpn9OHC3qNgtI0e6Uo%3D&ac=oaivgprodscus"></img>
       </button>
 
       {/* Chat Container */}
@@ -76,7 +76,7 @@ export default function ChatBot() {
               {msg.sender === "ai" && (
                 <img
                   className="avatar"
-                  src="https://videos.openai.com/az/vg-assets/assets%2Ftask_01k86e1pkzep7r2ace8nnr6s2d%2F1761152717_img_0.webp"
+                  src="https://videos.openai.com/az/vg-assets/assets%2Ftask_01k86e1pkzep7r2ace8nnr6s2d%2F1761152717_img_0.webp?se=2025-10-29T04%3A21%3A41Z&sp=r&sv=2024-08-04&sr=b&skoid=1af02b11-169c-463d-b441-d2ccfc9f02c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2025-10-23T03%3A51%3A09Z&ske=2025-10-30T03%3A56%3A09Z&sks=b&skv=2024-08-04&sig=S3pnQyIzPMYAhEsViOunDvCQinpn9OHC3qNgtI0e6Uo%3D&ac=oaivgprodscus"
                   alt="AI Avatar"
                 />
               )}
@@ -87,7 +87,7 @@ export default function ChatBot() {
               {msg.sender === "user" && (
                 <img
                   className="avatar"
-                  src="https://videos.openai.com/az/vg-assets/assets%2Ftask_01k86ecpjqf4hsm2wb0t5wpke1%2F1761153082_img_0.webp"
+                  src="https://videos.openai.com/az/vg-assets/assets%2Ftask_01k86ecpjqf4hsm2wb0t5wpke1%2F1761153082_img_0.webp?se=2025-10-29T04%3A21%3A41Z&sp=r&sv=2024-08-04&sr=b&skoid=1af02b11-169c-463d-b441-d2ccfc9f02c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2025-10-23T03%3A51%3A09Z&ske=2025-10-30T03%3A56%3A09Z&sks=b&skv=2024-08-04&sig=mWyCtV9nT4vmQPRPHc%2B9LV6hdiey5h3zvYowDWmQNWo%3D&ac=oaivgprodscus"
                   alt="User Avatar"
                 />
               )}

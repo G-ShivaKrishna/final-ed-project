@@ -100,12 +100,17 @@ def instructor_courses(request):
 from django.http import JsonResponse
 import requests
 
-# Replace with your DeepSeek/OpenRouter API key
+import json, requests
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+
+# ✅ Replace with your valid OpenRouter key
+import json, requests
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+
 API_KEY = "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"
 DEEPSEEK_URL = "https://openrouter.ai/api/v1/chat/completions"
-
-from django.views.decorators.csrf import csrf_exempt
-import json
 
 @csrf_exempt
 def ask_ai(request):
@@ -118,12 +123,19 @@ def ask_ai(request):
         if not prompt:
             return JsonResponse({"answer": "Prompt is required"}, status=400)
 
-        # Call DeepSeek API
-        headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+        # ✅ Correct headers — "Referer" (NOT "HTTP-Referer")
+        headers = {
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json",
+            "Referer": "http://localhost:3000",  # matches your frontend origin
+            "X-Title": "My Django Chat App"
+        }
+
         payload = {
-            "model": "deepseek/deepseek-chat-v3-0324",
+            "model": "deepseek/deepseek-chat",
             "messages": [{"role": "user", "content": prompt}]
         }
+
         response = requests.post(DEEPSEEK_URL, headers=headers, json=payload)
         data = response.json()
 
@@ -137,5 +149,3 @@ def ask_ai(request):
         
     except Exception as e:
         return JsonResponse({"answer": f"Server error: {str(e)}"}, status=500)
-
-
