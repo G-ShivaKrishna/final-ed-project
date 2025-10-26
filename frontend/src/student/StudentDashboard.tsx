@@ -367,13 +367,16 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
             </div>
 
               <div className="bg-white rounded-xl p-4 shadow-sm">
-                <h4 className="text-sm font-medium text-slate-700 mb-3">Joined courses</h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-medium text-slate-700 mb-3">Joined courses</h4>
+                  <button onClick={() => navigate('/courses')} className="text-xs text-indigo-600 hover:underline">View all</button>
+                </div>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {joinedCourses.length ? (
                     joinedCourses.map((c) => (
-                      <span key={c.id} className={`px-3 py-1 rounded-full text-sm ${c.color === 'purple' ? 'bg-violet-100 text-violet-700' : c.color === 'blue' ? 'bg-blue-100 text-blue-700' : c.color === 'gray' ? 'bg-gray-100 text-gray-700' : 'bg-slate-100 text-slate-700'}`}>
+                      <button key={c.id} onClick={() => navigate(`/courses/${c.id}`)} className={`px-3 py-1 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 ${c.color === 'purple' ? 'bg-violet-100 text-violet-700' : c.color === 'blue' ? 'bg-blue-100 text-blue-700' : c.color === 'gray' ? 'bg-gray-100 text-gray-700' : 'bg-slate-100 text-slate-700'}`}>
                         {c.code}
-                      </span>
+                      </button>
                     ))
                   ) : (
                     <div className="text-xs text-slate-500">No joined courses</div>
