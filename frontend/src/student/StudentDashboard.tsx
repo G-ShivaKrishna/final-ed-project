@@ -346,6 +346,11 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
                 </div>
               </div>
 
+              <div className="mt-4 flex items-center gap-2">
+                <button onClick={() => navigate('/profile')} className="px-3 py-1 text-sm rounded-md bg-white border">View profile</button>
+                <button onClick={() => navigate('/profile')} className="px-3 py-1 text-sm rounded-md bg-indigo-600 text-white">Edit profile</button>
+              </div>
+
               <div className="mt-4 grid grid-cols-2 gap-3">
                 <div className="p-3 bg-gray-50 rounded">
                   <div className="text-xs text-slate-500">Courses</div>
