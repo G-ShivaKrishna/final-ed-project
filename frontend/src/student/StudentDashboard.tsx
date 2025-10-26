@@ -150,6 +150,60 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
     setMenuOpen(false);
   };
 
+  // Derived data: joined courses and recent posts
+  // Build map of course -> latest assignment date, then pick 3 most recent courses
+  const courseMap = new Map<string | number, { course: { id: string | number; code?: string; color?: string }; latest: number }>();
+  groupedAssignments.forEach((g) => {
+    g.assignments.forEach((a) => {
+      if (a.course?.id != null) {
+        const id = a.course.id;
+        const ts = new Date(a.due_date).getTime();
+        const prev = courseMap.get(id);
+        if (!prev || ts > prev.latest) {
+          courseMap.set(id, { course: a.course as any, latest: ts });
+        }
+      }
+    });
+  });
+  const joinedCourses = Array.from(courseMap.values())
+    .sort((a, b) => b.latest - a.latest)
+    .map((x) => x.course)
+    .slice(0, 3);
+
+  const recentPosts = groupedAssignments
+    .flatMap((g) => g.assignments.map((a) => ({ ...a, groupDate: g.date })))
+    .sort((x, y) => new Date(y.due_date).getTime() - new Date(x.due_date).getTime())
+    .slice(0, 3);
+
+  // Mini 7-day calendar with status per day based on assignments
+  const next7Days = Array.from({ length: 7 }).map((_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() + i);
+    return d;
+  });
+
+  const dateKey = (d: Date) => d.toISOString().slice(0, 10);
+
+  const assignmentsByDate = new Map<string, AssignmentWithCourse[]>();
+  groupedAssignments.forEach((g) => {
+    g.assignments.forEach((a) => {
+      const key = dateKey(new Date(a.due_date));
+      const arr = assignmentsByDate.get(key) ?? [];
+      arr.push(a);
+      assignmentsByDate.set(key, arr);
+    });
+  });
+
+  function dayStatusFor(date: Date) {
+    const key = dateKey(date);
+    const list = assignmentsByDate.get(key) ?? [];
+    if (list.length === 0) return { label: 'No due', color: 'bg-gray-100 text-gray-600' };
+    if (list.some((a) => a.status === 'missing')) return { label: 'Due', color: 'bg-red-50 text-red-700' };
+    if (list.some((a) => a.status === 'submitted')) return { label: 'Submitted', color: 'bg-blue-50 text-blue-700' };
+    if (list.every((a) => a.status === 'graded')) return { label: 'Graded', color: 'bg-green-50 text-green-700' };
+    return { label: 'Due', color: 'bg-yellow-50 text-yellow-700' };
+  }
+
   const QuickActionButtons = () => (
     <>
       <button onClick={() => navigate('/grades')} className="text-left px-3 py-2 border rounded-md">View grades</button>
@@ -187,6 +241,24 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
             </div>
           </div>
         </header>
+
+        {/* Recent posts: latest assignment posts */}
+        <div className="mb-6">
+          <h3 className="text-sm text-slate-600 font-medium mb-3">Recent posts</h3>
+          <div className="flex flex-col sm:flex-row gap-3">
+            {recentPosts.map((p) => (
+              <div key={p.id} className="bg-white rounded-lg p-3 shadow-sm flex-1 min-w-0">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800 truncate">{p.title}</div>
+                    <div className="text-xs text-slate-500 mt-1">{p.course?.code} • {formatDate(p.due_date)}</div>
+                  </div>
+                  <div className={`text-xs px-2 py-1 rounded-full ${statusColor(p.status)}`}>{p.status}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Main column */}
@@ -271,13 +343,44 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
               </div>
             </div>
 
-            <div className="bg-white rounded-xl p-4 shadow-sm">
+              <div className="bg-white rounded-xl p-4 shadow-sm">
               <h4 className="text-sm font-medium text-slate-700 mb-3">Quick actions</h4>
               <div className="flex flex-col gap-2">
                   <button className="text-left px-3 py-2 bg-indigo-600 text-white rounded-md">Create submission</button>
                   <QuickActionButtons />
               </div>
             </div>
+
+              <div className="bg-white rounded-xl p-4 shadow-sm">
+                <h4 className="text-sm font-medium text-slate-700 mb-3">Joined courses</h4>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {joinedCourses.length ? (
+                    joinedCourses.map((c) => (
+                      <span key={c.id} className={`px-3 py-1 rounded-full text-sm ${c.color === 'purple' ? 'bg-violet-100 text-violet-700' : c.color === 'blue' ? 'bg-blue-100 text-blue-700' : c.color === 'gray' ? 'bg-gray-100 text-gray-700' : 'bg-slate-100 text-slate-700'}`}>
+                        {c.code}
+                      </span>
+                    ))
+                  ) : (
+                    <div className="text-xs text-slate-500">No joined courses</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl p-4 shadow-sm">
+                <h4 className="text-sm font-medium text-slate-700 mb-3">Calendar</h4>
+                <div className="mt-2 grid grid-cols-7 gap-2 text-center text-xs">
+                  {next7Days.map((d) => {
+                    const st = dayStatusFor(d);
+                    return (
+                      <div key={d.toISOString()} className="p-2 rounded-md">
+                        <div className="text-[10px] text-slate-500">{d.toLocaleDateString(undefined, { weekday: 'short' })}</div>
+                        <div className="text-sm font-semibold text-slate-800">{d.getDate()}</div>
+                        <div className={`mt-1 inline-block px-2 py-0.5 rounded-full text-[10px] ${st.color}`}>{st.label}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
 
             <div className="hidden lg:block">
               <div className="bg-white rounded-xl p-4 shadow-sm">
