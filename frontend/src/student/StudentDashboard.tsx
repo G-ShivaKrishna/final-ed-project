@@ -150,6 +150,21 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
     setMenuOpen(false);
   };
 
+  // Join course modal state
+  const [joinModalOpen, setJoinModalOpen] = useState(false);
+  const [joinCode, setJoinCode] = useState('');
+  const [joinStatus, setJoinStatus] = useState<string | null>(null);
+  const joinInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (joinModalOpen) {
+      // give the modal a tick to render, then focus
+      setTimeout(() => joinInputRef.current?.focus(), 50);
+      setJoinStatus(null);
+      setJoinCode('');
+    }
+  }, [joinModalOpen]);
+
   // Derived data: joined courses and recent posts
   // Build map of course -> latest assignment date, then pick 3 most recent courses
   const courseMap = new Map<string | number, { course: { id: string | number; code?: string; color?: string }; latest: number }>();
@@ -346,7 +361,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
               <div className="bg-white rounded-xl p-4 shadow-sm">
               <h4 className="text-sm font-medium text-slate-700 mb-3">Quick actions</h4>
               <div className="flex flex-col gap-2">
-                  <button className="text-left px-3 py-2 bg-indigo-600 text-white rounded-md">Create submission</button>
+          <button onClick={() => setJoinModalOpen(true)} className="text-left px-3 py-2 bg-indigo-600 text-white rounded-md">Join course</button>
                   <QuickActionButtons />
               </div>
             </div>
@@ -394,6 +409,33 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
         <div className="mt-8">
           <ChatBox />
         </div>
+        {/* Join Course Modal */}
+        {joinModalOpen && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/40" onClick={() => setJoinModalOpen(false)} />
+            <div className="relative bg-white rounded-lg shadow-lg w-full max-w-md p-6 z-50">
+              {!joinStatus ? (
+                <form onSubmit={(e) => { e.preventDefault(); setJoinStatus('the instructor will accept the joining'); }}>
+                  <h3 className="text-lg font-semibold text-slate-800 mb-2">Join course</h3>
+                  <p className="text-sm text-slate-500 mb-4">Enter the course code provided by your instructor.</p>
+                  <input ref={joinInputRef} value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="Enter code" className="w-full border rounded px-3 py-2 mb-4" />
+                  <div className="flex items-center justify-end gap-2">
+                    <button type="button" onClick={() => setJoinModalOpen(false)} className="px-3 py-2 rounded-md border">Cancel</button>
+                    <button type="submit" disabled={!joinCode.trim()} className="px-3 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-60">Request join</button>
+                  </div>
+                </form>
+              ) : (
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-800 mb-2">Request sent</h3>
+                  <p className="text-sm text-slate-500 mb-4">the instructor will accept the joining</p>
+                  <div className="flex justify-end">
+                    <button onClick={() => setJoinModalOpen(false)} className="px-3 py-2 rounded-md bg-indigo-600 text-white">Close</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
