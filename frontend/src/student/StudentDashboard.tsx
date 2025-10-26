@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { ChevronRight, MoreVertical, User, Calendar, Clock, CheckCircle, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ChatBox from './ChatBot';
@@ -88,6 +88,68 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
 
   const navigate = useNavigate();
 
+  // Menu state & refs for the header options menu
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // Close menu when clicking outside or pressing Escape
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setMenuOpen(false);
+    }
+
+    document.addEventListener('mousedown', onClickOutside);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClickOutside);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, []);
+
+  const handleRefresh = () => {
+    // In a real app this would re-fetch data; here we just close the menu.
+    console.log('Refresh requested');
+    setMenuOpen(false);
+  };
+
+  const handleExportCSV = () => {
+    // Flatten assignments into CSV rows
+    const rows: string[] = [];
+    rows.push(['id', 'title', 'due_date', 'status', 'completed_items', 'points', 'course_id', 'course_code'].join(','));
+    groupedAssignments.forEach((group) => {
+      group.assignments.forEach((a) => {
+        rows.push([
+          `${a.id}`,
+          `"${(a.title ?? '').replace(/"/g, '""')}"`,
+          a.due_date,
+          a.status,
+          `${a.completed_items ?? 0}`,
+          `${a.points ?? ''}`,
+          `${a.course?.id ?? ''}`,
+          `${a.course?.code ?? ''}`,
+        ].join(','));
+      });
+    });
+
+    const csv = rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'assignments.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setMenuOpen(false);
+  };
+
   const QuickActionButtons = () => (
     <>
       <button onClick={() => navigate('/grades')} className="text-left px-3 py-2 border rounded-md">View grades</button>
@@ -104,13 +166,25 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
             <p className="text-sm text-slate-500">Welcome back, {hardcodedName}</p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 relative">
             <button onClick={onLogout} className="hidden sm:inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg shadow hover:bg-red-700 transition">
               Logout
             </button>
-            <button className="p-2 rounded-lg bg-white shadow-sm hover:shadow-md">
-              <MoreVertical size={20} />
-            </button>
+
+            <div className="relative">
+              <button onClick={() => setMenuOpen((v) => !v)} className="p-2 rounded-lg bg-white shadow-sm hover:shadow-md" aria-haspopup="menu" aria-expanded={menuOpen}>
+                <MoreVertical size={20} />
+              </button>
+
+              {menuOpen && (
+                <div ref={menuRef} className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg ring-1 ring-black ring-opacity-5 py-1 z-50">
+                  <button onClick={handleRefresh} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Refresh</button>
+                  <button onClick={handleExportCSV} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Export CSV</button>
+                  <button onClick={() => { navigate('/grades'); setMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">View grades</button>
+                  <button onClick={() => { navigate('/course-settings'); setMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Course settings</button>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
