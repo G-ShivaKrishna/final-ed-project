@@ -54,10 +54,12 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
 ]
 # Allow requests from React
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://192.168.1.23:5173"
-]
+#CORS_ALLOWED_ORIGINS = [
+#    "http://localhost:5173",
+#    "http://192.168.1.23:5173",
+#]
+CORS_ALLOW_ALL_ORIGINS = True
+
 ROOT_URLCONF = 'core.urls'
 
 TEMPLATES = [
