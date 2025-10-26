@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Search } from 'lucide-react';
+import { useState } from 'react';
+import { Search, Users, Star } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 type Course = {
@@ -17,50 +17,75 @@ const sampleCourses: Course[] = [
   { id: 'c1', code: '4-1 FAM', title: 'Foundations of Applied Math', instructor: 'Dr. Singh', students: 30, color: 'gray' },
   { id: 'c4', code: 'CS105', title: 'Intro to Programming', instructor: 'Ms. Patel', students: 120, color: 'indigo' },
   { id: 'c5', code: 'PHY201', title: 'Physics II', instructor: 'Dr. Kumar', students: 60, color: 'green' },
+  { id: 'c6', code: 'HIS301', title: 'Modern History', instructor: 'Dr. Bose', students: 18, color: 'rose' },
 ];
 
 export default function CoursesPage(): JSX.Element {
   const [q, setQ] = useState('');
   const navigate = useNavigate();
+  const [sort, setSort] = useState<'popular' | 'recent' | 'alpha'>('recent');
 
-  const filtered = sampleCourses.filter((c) => c.code.toLowerCase().includes(q.toLowerCase()) || c.title.toLowerCase().includes(q.toLowerCase()));
+  const filtered = sampleCourses
+    .filter((c) => c.code.toLowerCase().includes(q.toLowerCase()) || c.title.toLowerCase().includes(q.toLowerCase()))
+    .sort((a, b) => {
+      if (sort === 'popular') return (b.students ?? 0) - (a.students ?? 0);
+      if (sort === 'alpha') return a.title.localeCompare(b.title);
+      return b.id.localeCompare(a.id);
+    });
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white p-6">
       <div className="max-w-6xl mx-auto">
-        <header className="flex items-start justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-semibold text-slate-800">All courses</h1>
-            <p className="text-sm text-slate-500">Browse your registered and available courses.</p>
+        <div className="bg-gradient-to-r from-indigo-600 to-pink-500 rounded-xl p-6 mb-6 text-white shadow-md">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h1 className="text-3xl font-bold">Explore courses</h1>
+              <p className="text-sm opacity-90">Find and join courses. Discover trending classes and your registered courses.</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <input value={q} onChange={(e) => setQ(e.target.value)} className="pl-10 pr-4 py-2 rounded-md border border-transparent bg-white/20 placeholder-white text-white focus:outline-none" placeholder="Search courses or code" />
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white"><Search size={16} /></span>
+              </div>
+              <select value={sort} onChange={(e) => setSort(e.target.value as any)} className="rounded-md bg-white/20 text-white px-3 py-2">
+                <option value="recent">Recently added</option>
+                <option value="popular">Most students</option>
+                <option value="alpha">A → Z</option>
+              </select>
+            </div>
           </div>
-
-          <div className="w-80">
-            <label className="relative block">
-              <span className="sr-only">Search courses</span>
-              <input value={q} onChange={(e) => setQ(e.target.value)} className="placeholder:text-slate-400 block bg-white w-full border border-slate-200 rounded-md py-2 pl-10 pr-3 shadow-sm focus:outline-none focus:border-indigo-300" placeholder="Search courses or code" />
-              <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400"><Search size={16} /></span>
-            </label>
-          </div>
-        </header>
+        </div>
 
         <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {filtered.map((c) => (
-            <article key={c.id} className="bg-white rounded-xl p-5 shadow hover:shadow-md transition">
-              <div className="flex items-start gap-3">
-                <div className={`w-12 h-12 rounded-lg flex items-center justify-center text-white font-semibold ${c.color === 'purple' ? 'bg-violet-500' : c.color === 'blue' ? 'bg-blue-500' : c.color === 'gray' ? 'bg-gray-500' : c.color === 'indigo' ? 'bg-indigo-600' : 'bg-green-600'}`}>
-                  {c.code.split('-')[0]}
+            <article key={c.id} className="bg-white rounded-2xl p-5 shadow-lg hover:scale-[1.01] transition-transform duration-150">
+              <div className="flex items-start gap-4">
+                <div className={`w-14 h-14 rounded-xl flex items-center justify-center text-white font-semibold text-lg ${c.color === 'purple' ? 'bg-violet-500' : c.color === 'blue' ? 'bg-blue-500' : c.color === 'gray' ? 'bg-gray-500' : c.color === 'indigo' ? 'bg-indigo-600' : c.color === 'green' ? 'bg-green-600' : 'bg-rose-500'}`}>
+                  {c.code.split(/\d/)[0]}
                 </div>
+
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold text-slate-800 truncate">{c.title}</h3>
-                    <div className="text-xs text-slate-500">{c.code}</div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-semibold text-slate-800 truncate">{c.title}</h3>
+                      <div className="text-xs text-slate-500 mt-1">{c.code} • Instructor: {c.instructor}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-semibold text-slate-800">{c.students}</div>
+                      <div className="text-xs text-slate-400">students</div>
+                    </div>
                   </div>
-                  <p className="text-xs text-slate-500 mt-1 truncate">Instructor: {c.instructor}</p>
+
+                  <p className="text-sm text-slate-600 mt-3 line-clamp-2">A well-designed course that covers key topics and practical examples to help you master the subject.</p>
+
                   <div className="mt-4 flex items-center justify-between">
-                    <div className="text-xs text-slate-500">{c.students} students</div>
+                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 rounded"> <Users size={14} /> {c.students}</span>
+                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-yellow-50 text-yellow-700 rounded"> <Star size={12} /> Popular</span>
+                    </div>
                     <div className="flex items-center gap-2">
-                      <button onClick={() => navigate(`/courses/${c.id}`)} className="px-3 py-1 text-sm rounded-md bg-indigo-600 text-white">Open</button>
-                      <button className="px-3 py-1 text-sm rounded-md border">Details</button>
+                      <button onClick={() => navigate(`/courses/${c.id}`)} className="px-4 py-2 rounded-md bg-indigo-600 text-white">Open</button>
+                      <button className="px-4 py-2 rounded-md border">Details</button>
                     </div>
                   </div>
                 </div>
