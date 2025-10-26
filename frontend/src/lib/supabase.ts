@@ -51,11 +51,11 @@ export const getCurrentUserProfile = async (): Promise<UserProfile | null> => {
     if (!user) return null;
 
     // Supabase project uses `users` table for profile information (id, email, username, role, etc.)
-    const { data } = await supabase
-      .from('users')
-      .select('id, email, username, role, major, phone_number, "College"')
-      .eq('id', user.id)
-      .maybeSingle();
+    const { data, error } = await supabase.from('users').select('*').eq('id', user.id).maybeSingle();
+    if (error) {
+      console.error('getCurrentUserProfile error', error);
+      return null;
+    }
 
     const profile = data
       ? {

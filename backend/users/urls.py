@@ -6,4 +6,5 @@ urlpatterns = [
     path('create-user/', views.create_user_record, name='create_user_record'),
     path('user-profile/', views.get_user_profile, name='get_user_profile'),
     path('user-profile/update/', views.update_user_profile, name='update_user_profile'),
+    path('dashboard/', views.dashboard_summary, name='dashboard_summary'),
 ]

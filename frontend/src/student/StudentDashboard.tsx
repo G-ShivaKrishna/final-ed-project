@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { ChevronRight, MoreVertical, User, Calendar, Clock, CheckCircle, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ChatBox from './ChatBot';
+import { supabase } from '../lib/supabase';
 
 type AssignmentWithCourse = {
   id: string | number;
@@ -29,50 +30,104 @@ function formatDate(iso: string) {
 }
 
 export default function StudentDashboard({ onLogout }: { onLogout: () => void }) {
-  // Hardcoded user (no backend)
-  const hardcodedEmail = '2203A51311@sru.edu.in';
-  const hardcodedName = 'Akhil Kumar';
+  // Profile and counts will come from backend
+  const [profileName, setProfileName] = useState<string | null>(null);
+  const [profileEmail, setProfileEmail] = useState<string | null>(null);
+  const [enrolledCount, setEnrolledCount] = useState<number | null>(null);
+  const [assignmentsDueCount, setAssignmentsDueCount] = useState<number | null>(null);
 
-  // Hardcoded assignments grouped by date
-  const [groupedAssignments] = useState<GroupedAssignment[]>([
-    {
-      date: 'Today',
-      assignments: [
-        {
-          id: 1,
-          title: 'Journal Entries',
-          due_date: '2025-10-27T11:29:00Z',
-          status: 'missing',
-          completed_items: 0,
-          points: 5,
-          course: { id: 'c1', code: '4-1 FAM', color: 'gray' },
-        },
-        {
-          id: 2,
-          title: 'Homework 3',
-          due_date: '2025-10-27T15:00:00Z',
-          status: 'submitted',
-          completed_items: 3,
-          points: 10,
-          course: { id: 'c2', code: 'MATH101', color: 'blue' },
-        },
-      ],
-    },
-    {
-      date: 'Wed, Oct 29',
-      assignments: [
-        {
-          id: 3,
-          title: 'Essay Draft',
-          due_date: '2025-10-29T09:00:00Z',
-          status: 'graded',
-          completed_items: 5,
-          points: 20,
-          course: { id: 'c3', code: 'ENG202', color: 'purple' },
-        },
-      ],
-    },
-  ]);
+  // assignments grouped by date (populated from backend)
+  const [groupedAssignments, setGroupedAssignments] = useState<GroupedAssignment[]>([]);
+
+  useEffect(() => {
+    let channel: any | null = null;
+    fetchAssignments();
+    fetchProfileSummary();
+
+    try {
+      channel = (window as any).supabaseClient?.channel
+        ? (window as any).supabaseClient
+            .channel('public:assignments')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'assignments' }, () => {
+              fetchAssignments();
+              fetchProfileSummary();
+            })
+            .subscribe()
+        : null;
+    } catch (err) {
+      // ignore realtime subscription errors
+    }
+
+    return () => {
+      if (channel && (window as any).supabaseClient) {
+        (window as any).supabaseClient.removeChannel(channel);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const fetchProfileSummary = async () => {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id;
+      if (!userId) return;
+
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+
+      // profile
+      const profileRes = await fetch(`${API_BASE}/users/user-profile/?user_id=${encodeURIComponent(userId)}`);
+      if (profileRes.ok) {
+        const json = await profileRes.json();
+        const data = json.data || json;
+        if (data) {
+          setProfileName(data.username || data.full_name || null);
+          setProfileEmail(data.email || null);
+        }
+      }
+
+      // summary
+      const dashRes = await fetch(`${API_BASE}/users/dashboard/?user_id=${encodeURIComponent(userId)}`);
+      if (dashRes.ok) {
+        const json = await dashRes.json();
+        setEnrolledCount(json.enrolled_courses ?? null);
+        setAssignmentsDueCount(json.assignments_due ?? null);
+      }
+    } catch (err) {
+      console.error('fetchProfileSummary error', err);
+    }
+  };
+
+  const fetchAssignments = async () => {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id;
+      if (!userId) return;
+
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+      const res = await fetch(`${API_BASE}/users/dashboard/?user_id=${encodeURIComponent(userId)}`);
+      if (!res.ok) {
+        console.error('dashboard API error', res.status);
+        return;
+      }
+
+      const json = await res.json();
+      const assignments = json.assignments || [];
+      if (assignments) {
+        // convert assignments to our local type and group by date
+        const grouped = assignments.reduce((acc: Record<string, AssignmentWithCourse[]>, a: any) => {
+          const date = new Date(a.due_date);
+          const dateStr = date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+          acc[dateStr] = acc[dateStr] || [];
+          acc[dateStr].push(a as AssignmentWithCourse);
+          return acc;
+        }, {});
+  const groupedArr = Object.entries(grouped).map(([date, assignments]) => ({ date, assignments })) as GroupedAssignment[];
+  setGroupedAssignments(groupedArr);
+      }
+    } catch (err) {
+      console.error('fetchAssignments error', err);
+    }
+  };
 
   const statusColor = (status: string) => {
     switch (status) {
@@ -287,7 +342,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
         <header className="flex items-center justify-between mb-6">
           <div className="flex flex-col justify-center">
             <h1 className="text-3xl font-semibold text-slate-800">Dashboard</h1>
-            <p className="text-sm text-slate-500">Welcome back, {hardcodedName}</p>
+            <p className="text-sm text-slate-500">Welcome back, {profileName ?? 'Student'}</p>
           </div>
           <div className="flex items-center gap-3 relative">
             <button onClick={onLogout} className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg shadow hover:bg-red-700 transition">Logout</button>
@@ -398,8 +453,8 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
                   <User size={20} />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold text-slate-800">{hardcodedName}</div>
-                  <div className="text-xs text-slate-500">{hardcodedEmail}</div>
+                  <div className="text-sm font-semibold text-slate-800">{profileName ?? 'Student'}</div>
+                  <div className="text-xs text-slate-500">{profileEmail ?? ''}</div>
                 </div>
               </div>
 
@@ -411,11 +466,11 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
               <div className="mt-4 grid grid-cols-2 gap-3">
                 <div className="p-3 bg-gray-50 rounded">
                   <div className="text-xs text-slate-500">Courses</div>
-                  <div className="text-lg font-semibold text-slate-800">3</div>
+                  <div className="text-lg font-semibold text-slate-800">{typeof enrolledCount === 'number' ? enrolledCount : '—'}</div>
                 </div>
                 <div className="p-3 bg-gray-50 rounded">
                   <div className="text-xs text-slate-500">Assignments due</div>
-                  <div className="text-lg font-semibold text-slate-800">4</div>
+                  <div className="text-lg font-semibold text-slate-800">{typeof assignmentsDueCount === 'number' ? assignmentsDueCount : '—'}</div>
                 </div>
               </div>
             </div>
