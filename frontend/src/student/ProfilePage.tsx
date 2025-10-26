@@ -38,6 +38,8 @@ export default function ProfilePage(): JSX.Element {
     fetchProfile();
   }, []);
 
+  if (!profile) return <p>Loading...</p>;
+
   function startEdit() {
     setDraft(profile);
     setEditing(true);
@@ -98,7 +100,7 @@ export default function ProfilePage(): JSX.Element {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   {editing ? (
-                    <input className="text-xl font-semibold text-slate-800 border-b pb-1 w-full" value={draft.fullName} onChange={(e) => setDraft({ ...draft, fullName: e.target.value })} />
+                    <input className="text-xl font-semibold text-slate-800 border-b pb-1 w-full" value={draft.fullName ?? ''} onChange={(e) => setDraft({ ...draft, fullName: e.target.value })} />
                   ) : (
                     <div className="text-xl font-semibold text-slate-800">{profile.fullName}</div>
                   )}
@@ -121,7 +123,7 @@ export default function ProfilePage(): JSX.Element {
                 <div>
                   <div className="text-xs text-slate-500">Phone</div>
                   {editing ? (
-                    <input className="w-full border rounded px-2 py-1" value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} />
+                    <input className="w-full border rounded px-2 py-1" value={draft.phone ?? ''} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} />
                   ) : (
                     <div className="text-sm text-slate-700">{profile.phone}</div>
                   )}
@@ -130,7 +132,7 @@ export default function ProfilePage(): JSX.Element {
                 <div>
                   <div className="text-xs text-slate-500">Major</div>
                   {editing ? (
-                    <input className="w-full border rounded px-2 py-1" value={draft.major} onChange={(e) => setDraft({ ...draft, major: e.target.value })} />
+                    <input className="w-full border rounded px-2 py-1" value={draft.major ?? ''} onChange={(e) => setDraft({ ...draft, major: e.target.value })} />
                   ) : (
                     <div className="text-sm text-slate-700">{profile.major}</div>
                   )}
@@ -141,7 +143,7 @@ export default function ProfilePage(): JSX.Element {
                 <div>
                   <div className="text-xs text-slate-500">College</div>
                   {editing ? (
-                    <input className="w-full border rounded px-2 py-1" value={draft.college} onChange={(e) => setDraft({ ...draft, college: e.target.value })} />
+                    <input className="w-full border rounded px-2 py-1" value={draft.college ?? ''} onChange={(e) => setDraft({ ...draft, college: e.target.value })} />
                   ) : (
                     <div className="text-sm text-slate-700">{profile.college}</div>
                   )}
