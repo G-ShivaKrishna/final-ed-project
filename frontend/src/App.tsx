@@ -6,6 +6,7 @@ import StudentDashboard from './student/StudentDashboard';
 import InstructorDashboard from './instructor/InstructorDashboard';
 import ViewGrades from './student/ViewGrades';
 import CourseSettings from './student/CourseSettings';
+import InboxPage from './student/InboxPage';
 import CoursesPage from './student/CoursesPage';
 import ProfilePage from './student/ProfilePage';
 import supabase from './supabaseClient';
@@ -96,7 +97,13 @@ function RoutesWrapper({ session, role, onLogout }: { session: any; role: string
       <Route path="/grades" element={<ViewGrades />} />
   <Route path="/courses" element={<CoursesPage />} />
   <Route path="/profile" element={<ProfilePage />} />
+      <Route path="/inbox" element={<InboxPage />} />
       <Route path="/course-settings" element={<CourseSettings />} />
+  
+        {/* backwards-compatible redirect for legacy/capitalized path */}
+        <Route path="/Dashboard" element={<Navigate to="/student-dashboard" replace />} />
+        {/* catch-all: redirect unknown routes to root */}
+        <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

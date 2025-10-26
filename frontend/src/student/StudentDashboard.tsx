@@ -222,7 +222,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
   const QuickActionButtons = () => (
     <>
       <button onClick={() => navigate('/grades')} className="text-left px-3 py-2 border rounded-md">View grades</button>
-      <button onClick={() => navigate('/course-settings')} className="text-left px-3 py-2 border rounded-md">Course settings</button>
+      <button onClick={() => navigate('/inbox')} className="text-left px-3 py-2 border rounded-md">Inbox</button>
     </>
   );
 
@@ -230,30 +230,25 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
   <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-50 p-6 pointer-events-auto">
       <div className="max-w-7xl mx-auto">
         <header className="flex items-center justify-between mb-6">
-          <div>
+          <div className="flex flex-col justify-center">
             <h1 className="text-3xl font-semibold text-slate-800">Dashboard</h1>
             <p className="text-sm text-slate-500">Welcome back, {hardcodedName}</p>
           </div>
-
           <div className="flex items-center gap-3 relative">
-            <button onClick={onLogout} className="hidden sm:inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg shadow hover:bg-red-700 transition">
-              Logout
+            <button onClick={onLogout} className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg shadow hover:bg-red-700 transition">Logout</button>
+
+            <button onClick={() => setMenuOpen((v) => !v)} className="h-10 w-10 flex items-center justify-center rounded-lg bg-white shadow-sm hover:shadow-md" aria-haspopup="menu" aria-expanded={menuOpen}>
+              <MoreVertical size={20} />
             </button>
 
-            <div className="relative">
-              <button onClick={() => setMenuOpen((v) => !v)} className="h-10 w-10 flex items-center justify-center rounded-lg bg-white shadow-sm hover:shadow-md" aria-haspopup="menu" aria-expanded={menuOpen}>
-                <MoreVertical size={20} />
-              </button>
-
-              {menuOpen && (
-                <div ref={menuRef} className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg ring-1 ring-black ring-opacity-5 py-1 z-50">
-                  <button onClick={handleRefresh} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Refresh</button>
-                  <button onClick={handleExportCSV} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Export CSV</button>
-                  <button onClick={() => { navigate('/grades'); setMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">View grades</button>
-                  <button onClick={() => { navigate('/course-settings'); setMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Course settings</button>
-                </div>
-              )}
-            </div>
+            {menuOpen && (
+              <div ref={menuRef} className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg ring-1 ring-black ring-opacity-5 py-1 z-50">
+                <button onClick={handleRefresh} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Refresh</button>
+                <button onClick={handleExportCSV} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Export CSV</button>
+                <button onClick={() => { navigate('/grades'); setMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">View grades</button>
+                <button onClick={() => { navigate('/inbox'); setMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Inbox</button>
+              </div>
+            )}
           </div>
         </header>
 
