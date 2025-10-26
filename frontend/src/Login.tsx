@@ -24,18 +24,48 @@ export default function Login(): JSX.Element {
     let role: string | null = null;
 
     if (!identifier.includes('@')) {
-      const { data: user, error: findError } = await supabase
-        .from('users')
-        .select('email, role')
-        .eq('username', identifier)
-        .single();
+      // lookup email by username via backend lookup endpoint
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+      try {
+        const res = await fetch(`${API_BASE}/users/lookup-user/?username=${encodeURIComponent(identifier)}`);
+        if (!res.ok) {
+          if (res.status === 404) {
+            setError('No account with that username.');
+            return;
+          }
+          // fallback to client-side supabase lookup
+          const { data: user, error: findError } = await supabase
+            .from('users')
+            .select('email, role')
+            .eq('username', identifier)
+            .single();
 
-      if (findError || !user) {
-        setError('No account with that username.');
-        return;
+          if (findError || !user) {
+            setError('No account with that username.');
+            return;
+          }
+          emailToLogin = user.email;
+          role = user.role;
+        } else {
+          const json = await res.json();
+          emailToLogin = json.email;
+          role = json.role;
+        }
+      } catch (err) {
+        // network/backend error: fall back to supabase lookup
+        const { data: user, error: findError } = await supabase
+          .from('users')
+          .select('email, role')
+          .eq('username', identifier)
+          .single();
+
+        if (findError || !user) {
+          setError('No account with that username.');
+          return;
+        }
+        emailToLogin = user.email;
+        role = user.role;
       }
-      emailToLogin = user.email;
-      role = user.role;
     }
 
     const { error: loginError } = await supabase.auth.signInWithPassword({
@@ -49,17 +79,35 @@ export default function Login(): JSX.Element {
     }
 
     if (!role) {
-      const { data: userInfo, error: roleError } = await supabase
-        .from('users')
-        .select('role')
-        .eq('email', emailToLogin)
-        .single();
-
-      if (roleError || !userInfo) {
-        setError('Unable to fetch user role.');
-        return;
+      // after successful sign in, fetch profile from backend by user id to get role
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const userId = session?.user?.id;
+        if (userId) {
+          const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+          const res = await fetch(`${API_BASE}/users/user-profile/?user_id=${encodeURIComponent(userId)}`);
+          if (res.ok) {
+            const json = await res.json();
+            role = json.role;
+          }
+        }
+      } catch (err) {
+        // fallback to querying supabase directly
       }
-      role = userInfo.role;
+
+      if (!role) {
+        const { data: userInfo, error: roleError } = await supabase
+          .from('users')
+          .select('role')
+          .eq('email', emailToLogin)
+          .single();
+
+        if (roleError || !userInfo) {
+          setError('Unable to fetch user role.');
+          return;
+        }
+        role = userInfo.role;
+      }
     }
 
     setMessage('Login successful! Redirecting...');

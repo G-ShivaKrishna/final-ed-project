@@ -1,23 +1,42 @@
 import { useNavigate } from 'react-router-dom';
 import { User, ChevronLeft, Edit2, Save, X } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import supabase from '../supabaseClient';
 
 export default function ProfilePage(): JSX.Element {
   const navigate = useNavigate();
 
-  // Made-up profile details (editable locally)
-  const [profile, setProfile] = useState({
-    fullName: 'Akhil Kumar',
-    email: 'akhil.kumar@example.com',
-    phone: '+91 98765 43210',
-    major: 'Computer Science',
-    year: '3rd Year',
-    college: 'SRU University',
-    bio: 'Passionate computer science student with interests in algorithms, machine learning, and full-stack development. Contributor to several open-source projects and organizer of campus hackathons.'
-  });
-
+  const [profile, setProfile] = useState<any | null>(null);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(profile);
+  const [draft, setDraft] = useState<any>({});
+
+  useEffect(() => {
+    const fetchProfile = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const userId = session.user.id;
+      const { data, error } = await supabase
+        .from('users')
+        .select('username, email, role, major, phone_number, "College"')
+        .eq('id', userId)
+        .single();
+
+      if (!error && data) {
+        const normalized = {
+          fullName: data.username,
+          email: data.email,
+          phone: data.phone_number ?? '',
+          major: data.major ?? '',
+          college: data.College ?? '',
+        };
+        setProfile(normalized);
+        setDraft(normalized);
+      }
+    };
+
+    fetchProfile();
+  }, []);
 
   function startEdit() {
     setDraft(profile);
@@ -30,8 +49,33 @@ export default function ProfilePage(): JSX.Element {
   }
 
   function saveEdit() {
-    setProfile(draft);
-    setEditing(false);
+    // persist to Supabase
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const userId = session.user.id;
+      const payload: any = {
+        username: draft.fullName,
+        major: draft.major,
+        phone_number: draft.phone,
+        College: draft.college,
+      };
+
+      const { data, error } = await supabase.from('users').update(payload).eq('id', userId).select().single();
+      if (!error && data) {
+        const normalized = {
+          fullName: data.username,
+          email: data.email,
+          phone: data.phone_number ?? '',
+          major: data.major ?? '',
+          college: data.College ?? '',
+        };
+        setProfile(normalized);
+        setDraft(normalized);
+        setEditing(false);
+      }
+    })();
   }
 
   return (
@@ -92,14 +136,7 @@ export default function ProfilePage(): JSX.Element {
                   )}
                 </div>
 
-                <div>
-                  <div className="text-xs text-slate-500">Year</div>
-                  {editing ? (
-                    <input className="w-full border rounded px-2 py-1" value={draft.year} onChange={(e) => setDraft({ ...draft, year: e.target.value })} />
-                  ) : (
-                    <div className="text-sm text-slate-700">{profile.year}</div>
-                  )}
-                </div>
+                {/* Year removed from profile */}
 
                 <div>
                   <div className="text-xs text-slate-500">College</div>
@@ -110,15 +147,7 @@ export default function ProfilePage(): JSX.Element {
                   )}
                 </div>
               </div>
-
-              <div className="mt-4">
-                <div className="text-xs text-slate-500">Bio</div>
-                {editing ? (
-                  <textarea className="w-full border rounded px-2 py-2 mt-1" rows={4} value={draft.bio} onChange={(e) => setDraft({ ...draft, bio: e.target.value })} />
-                ) : (
-                  <p className="text-sm text-slate-600 mt-1">{profile.bio}</p>
-                )}
-              </div>
+              {/* Bio removed from profile per change request */}
             </div>
           </div>
 

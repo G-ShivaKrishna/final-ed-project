@@ -59,17 +59,22 @@ export default function Signup(): JSX.Element {
     const userId = (data as any)?.user?.id;
 
     if (userId) {
-      const { error: dbError } = await supabase.from('users').insert([
-        {
-          id: userId,
-          email: form.email,
-          username: form.username,
-          role: form.role,
-        },
-      ]);
+      // create user record via backend so server can control DB writes
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://127.0.0.1:8000/';
+      try {
+        const resp = await fetch(`${API_BASE}users/create-user/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: userId, email: form.email, username: form.username, role: form.role }),
+        });
 
-      if (dbError) {
-        setError(dbError.message);
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          setError(err?.error || 'Failed to create user record');
+          return;
+        }
+      } catch (e: any) {
+        setError(e?.message || 'Network error creating user record');
         return;
       }
     } else {

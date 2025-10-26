@@ -2,9 +2,8 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    path('test-supabase/', views.test_supabase),
-    path('create-course/', views.create_course),
-    path('join-course/', views.join_course),
-    path('instructor-courses/', views.instructor_courses),
-    path('ask/', views.ask_ai, name='ask_ai'),
+    path('lookup-user/', views.lookup_user_by_username, name='lookup_user_by_username'),
+    path('create-user/', views.create_user_record, name='create_user_record'),
+    path('user-profile/', views.get_user_profile, name='get_user_profile'),
+    path('user-profile/update/', views.update_user_profile, name='update_user_profile'),
 ]

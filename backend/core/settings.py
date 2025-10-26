@@ -54,7 +54,8 @@ MIDDLEWARE = [
 ]
 # Allow requests from React
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://192.168.1.23:5173"
 ]
 ROOT_URLCONF = 'core.urls'
 
