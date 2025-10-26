@@ -5,11 +5,14 @@ import Login from './Login';
 import StudentDashboard from './student/StudentDashboard';
 import InstructorDashboard from './instructor/InstructorDashboard';
 import supabase from './supabaseClient';
+import { UserProvider } from './lib/UserContext';
 
 function AppWrapper(): JSX.Element {
   return (
     <Router>
-      <App />
+      <UserProvider>
+        <App />
+      </UserProvider>
     </Router>
   );
 }

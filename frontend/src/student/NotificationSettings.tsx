@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X, Calendar, Bell, BellOff, Menu } from 'lucide-react';
-import { supabase, NotificationSetting, UserProfile } from '../lib/supabase';
+import { NotificationSetting, UserProfile, getNotificationSettings } from '../lib/supabase';
+import { useUser } from '../lib/UserContext';
 
 type NotificationSettingsProps = {
   onNavigate: (view: string) => void;
@@ -9,33 +10,19 @@ type NotificationSettingsProps = {
 export default function NotificationSettings({ onNavigate }: NotificationSettingsProps) {
   const [settings, setSettings] = useState<NotificationSetting[]>([]);
   const [user, setUser] = useState<UserProfile | null>(null);
+  const { user: ctxUser, loading } = useUser();
 
   useEffect(() => {
-    fetchUser();
-  }, []);
-
-  const fetchUser = async () => {
-    const { data: userData } = await supabase
-      .from('user_profiles')
-      .select('*')
-      .eq('email', '2203A51311@sru.edu.in')
-      .maybeSingle();
-
-    if (userData) {
-      setUser(userData);
-      fetchSettings(userData.id);
+    // sync context user into local state and load settings when available
+    if (!loading && ctxUser) {
+      setUser(ctxUser);
+      fetchSettings(ctxUser.id);
     }
-  };
+  }, [ctxUser, loading]);
 
   const fetchSettings = async (userId: string) => {
-    const { data } = await supabase
-      .from('notification_settings')
-      .select('*')
-      .eq('user_id', userId);
-
-    if (data) {
-      setSettings(data);
-    }
+    const data = await getNotificationSettings(userId);
+    if (data) setSettings(data);
   };
 
   const getSettingByType = (type: string) => {
@@ -157,7 +144,7 @@ export default function NotificationSettings({ onNavigate }: NotificationSetting
               <div className="font-medium">Course activities</div>
               <div className="font-medium text-center">
                 <div>Email</div>
-                <div className="text-sm font-normal text-gray-600">2203A51311@sru.edu.in</div>
+                <div className="text-sm font-normal text-gray-600">{user?.email ?? '—'}</div>
               </div>
               <div className="font-medium text-center">
                 <div>Push Notification</div>

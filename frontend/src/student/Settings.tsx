@@ -1,32 +1,21 @@
 import { useEffect, useState } from 'react';
 import { User, Menu, Star, Trash2, Edit } from 'lucide-react';
-import { supabase, UserProfile } from '../lib/supabase';
+import { UserProfile } from '../lib/supabase';
+import { useUser } from '../lib/UserContext';
 
 type SettingsProps = {
   onNavigate: (view: string) => void;
 };
 
 export default function Settings({ onNavigate }: SettingsProps) {
-  const [user, setUser] = useState<UserProfile | null>(null);
+  const { user, loading } = useUser();
 
-  useEffect(() => {
-    fetchUser();
-  }, []);
-
-  const fetchUser = async () => {
-    const { data } = await supabase
-      .from('user_profiles')
-      .select('*')
-      .eq('email', '2203A51311@sru.edu.in')
-      .maybeSingle();
-
-    if (data) {
-      setUser(data);
-    }
-  };
+  if (loading && !user) {
+    return <div className="flex-1 bg-white">Loading...</div>;
+  }
 
   if (!user) {
-    return <div className="flex-1 bg-white">Loading...</div>;
+    return <div className="flex-1 bg-white">No user</div>;
   }
 
   return (
