@@ -12,7 +12,9 @@ export default function ChatBot(): JSX.Element {
   const [isTyping, setIsTyping] = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
-  const apiUrl = `${process.env.REACT_APP_SERVER_URL || 'http://localhost:8000/users/ask/'}`;
+  // Use Vite's import.meta.env (prefer VITE_ vars). Avoid referencing `process` in browser.
+  const env = (import.meta as any)?.env || {};
+  const apiUrl = `${env.VITE_SERVER_URL || env.REACT_APP_SERVER_URL || 'http://localhost:8000/users/ask/'}`;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
