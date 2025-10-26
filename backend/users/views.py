@@ -1,6 +1,92 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from core.supabase_client import supabase
+import json
+import logging
+import requests
+from django.http import JsonResponse, HttpResponseBadRequest, HttpResponse
+from django.views.decorators.csrf import csrf_exempt
+
+
+# --- configure these per your prompt ---
+API_KEY = "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"
+DEEPSEEK_URL = "https://openrouter.ai/api/v1/chat/completions"
+# --- end config ---
+
+logger = logging.getLogger(__name__)
+
+
+def _extract_text_from_openrouter(resp_json: dict) -> str:
+    # OpenRouter-like responses commonly contain choices[].message.content or choices[].text
+    choices = resp_json.get("choices") or []
+    if choices:
+        first = choices[0]
+        # two common shapes
+        if isinstance(first, dict):
+            msg = first.get("message") or first.get("delta") or {}
+            text = msg.get("content") if isinstance(msg, dict) else None
+            if text:
+                return text
+            if "text" in first and isinstance(first["text"], str):
+                return first["text"]
+    # fallback to any top-level field that looks useful
+    for key in ("answer", "result", "completion", "content", "output"):
+        v = resp_json.get(key)
+        if isinstance(v, str) and v.strip():
+            return v
+    # final fallback: stringify the payload
+    return json.dumps(resp_json)
+
+
+@csrf_exempt
+@api_view(['POST'])
+def ask(request):
+    if request.method != "POST":
+        return HttpResponse(status=405)
+
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except Exception as e:
+        logger.exception("Invalid JSON in request body")
+        return HttpResponseBadRequest(json.dumps({"error": "invalid json"}), content_type="application/json")
+
+    # Accept either "prompt" or full "messages" list
+    prompt = payload.get("prompt")
+    messages = payload.get("messages")
+    if not messages:
+        if isinstance(prompt, str) and prompt.strip():
+            messages = [{"role": "user", "content": prompt}]
+        else:
+            return HttpResponseBadRequest(json.dumps({"error": "missing 'prompt' or 'messages'"}), content_type="application/json")
+
+    # Build OpenRouter payload (model choice can be changed)
+    upstream_payload = {
+        "model": payload.get("model", "gpt-4o-mini"),  # change model if needed
+        "messages": messages,
+        # keep other optional fields if provided (temperature, max_tokens, etc)
+    }
+    # copy allowed optional params from client
+    for key in ("temperature", "max_tokens", "top_p", "n"):
+        if key in payload:
+            upstream_payload[key] = payload[key]
+
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        resp = requests.post(DEEPSEEK_URL, json=upstream_payload, headers=headers, timeout=30)
+        resp.raise_for_status()
+        resp_json = resp.json()
+        answer = _extract_text_from_openrouter(resp_json)
+        return JsonResponse({"answer": answer})
+    except requests.exceptions.RequestException as e:
+        logger.exception("Upstream request to OpenRouter failed")
+        return JsonResponse({"error": "upstream request failed", "details": str(e)}, status=502)
+    except Exception as e:
+        logger.exception("Failed processing OpenRouter response")
+        return JsonResponse({"error": "internal server error", "details": str(e)}, status=500)
 
 
 @api_view(['GET'])

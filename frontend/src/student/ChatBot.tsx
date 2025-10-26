@@ -12,9 +12,11 @@ export default function ChatBot(): JSX.Element {
   const [isTyping, setIsTyping] = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
-  // Use Vite's import.meta.env (prefer VITE_ vars). Avoid referencing `process` in browser.
   const env = (import.meta as any)?.env || {};
-  const apiUrl = `${env.VITE_SERVER_URL || env.REACT_APP_SERVER_URL || 'http://localhost:8000/users/ask/'}`;
+  const apiUrl =
+    env.VITE_SERVER_URL ||
+    env.REACT_APP_SERVER_URL ||
+    'http://localhost:8000/users/ask/';
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -45,10 +47,12 @@ export default function ChatBot(): JSX.Element {
       setIsTyping(false);
       addMessage(data.answer || 'No response received.', 'bot');
     } catch (error) {
-      // eslint-disable-next-line no-console
       console.error(error);
       setIsTyping(false);
-      addMessage('AI is unavailable right now. Please try again later.', 'bot');
+      addMessage(
+        'AI is unavailable right now. Please try again later.',
+        'bot'
+      );
     }
   };
 
@@ -65,7 +69,9 @@ export default function ChatBot(): JSX.Element {
       <div className={`chat-window ${open ? 'active' : ''}`}>
         <div className="chat-header">
           <span>ChatBot</span>
-          <button className="close-button" onClick={toggleChat}>×</button>
+          <button className="close-button" onClick={toggleChat}>
+            ×
+          </button>
         </div>
 
         <div className="chat-messages">
@@ -73,8 +79,9 @@ export default function ChatBot(): JSX.Element {
             <div
               key={i}
               className={`message ${msg.sender === 'user' ? 'sent' : 'received'}`}
-              dangerouslySetInnerHTML={{ __html: msg.text }}
-            />
+            >
+              {msg.text} {/* Render as plain text to avoid extra characters */}
+            </div>
           ))}
 
           {isTyping && (
@@ -99,7 +106,9 @@ export default function ChatBot(): JSX.Element {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyPress}
           />
-          <button className="send-button" onClick={sendMessage}>↑</button>
+          <button className="send-button" onClick={sendMessage}>
+            ↑
+          </button>
         </div>
       </div>
     </>
