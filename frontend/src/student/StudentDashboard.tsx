@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ChevronRight, MoreVertical, User, Calendar, Clock, CheckCircle, XCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import ChatBox from './ChatBot';
 
 type AssignmentWithCourse = {
@@ -85,8 +86,17 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
     }
   };
 
+  const navigate = useNavigate();
+
+  const QuickActionButtons = () => (
+    <>
+      <button onClick={() => navigate('/grades')} className="text-left px-3 py-2 border rounded-md">View grades</button>
+      <button onClick={() => navigate('/course-settings')} className="text-left px-3 py-2 border rounded-md">Course settings</button>
+    </>
+  );
+
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-50 p-6">
+  <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-50 p-6 pointer-events-auto">
       <div className="max-w-7xl mx-auto">
         <header className="flex items-center justify-between mb-6">
           <div>
@@ -122,7 +132,6 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
 
                   <div className="space-y-3">
                     {group.assignments.map((a) => {
-                      const isLate = a.status === 'submitted' && a.due_date < new Date().toISOString();
                       return (
                         <article key={a.id} className="flex items-center gap-4 p-4 rounded-lg border border-transparent hover:border-slate-200 transition bg-gradient-to-b from-white to-white/95">
                           <div className={`w-2 h-12 rounded-l-md ${a.course?.color === 'purple' ? 'bg-violet-500' : a.course?.color === 'blue' ? 'bg-blue-500' : a.course?.color === 'gray' ? 'bg-gray-400' : 'bg-slate-400'}`} />
@@ -191,9 +200,8 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
             <div className="bg-white rounded-xl p-4 shadow-sm">
               <h4 className="text-sm font-medium text-slate-700 mb-3">Quick actions</h4>
               <div className="flex flex-col gap-2">
-                <button className="text-left px-3 py-2 bg-indigo-600 text-white rounded-md">Create submission</button>
-                <button className="text-left px-3 py-2 border rounded-md">View grades</button>
-                <button className="text-left px-3 py-2 border rounded-md">Course settings</button>
+                  <button className="text-left px-3 py-2 bg-indigo-600 text-white rounded-md">Create submission</button>
+                  <QuickActionButtons />
               </div>
             </div>
 

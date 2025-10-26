@@ -46,11 +46,14 @@
   transform: translateY(30px);
   transition: opacity 0.3s ease, transform 0.3s ease;
   z-index: 1000;
+  /* don't block pointer events when hidden */
+  pointer-events: none;
 }
 .chat-window.active {
   display: flex;
   opacity: 1;
   transform: translateY(0);
+  pointer-events: auto;
 }
 
 /* Header */

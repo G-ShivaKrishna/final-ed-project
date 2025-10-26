@@ -4,6 +4,8 @@ import Signup from './Signup';
 import Login from './Login';
 import StudentDashboard from './student/StudentDashboard';
 import InstructorDashboard from './instructor/InstructorDashboard';
+import ViewGrades from './student/ViewGrades';
+import CourseSettings from './student/CourseSettings';
 import supabase from './supabaseClient';
 import { UserProvider } from './lib/UserContext';
 
@@ -89,6 +91,8 @@ function RoutesWrapper({ session, role, onLogout }: { session: any; role: string
       {/* Dashboards */}
       <Route path="/student-dashboard" element={<StudentDashboard onLogout={() => onLogout(navigate)} />} />
       <Route path="/instructor-dashboard" element={<InstructorDashboard onLogout={() => onLogout(navigate)} />} />
+      <Route path="/grades" element={<ViewGrades />} />
+      <Route path="/course-settings" element={<CourseSettings />} />
     </Routes>
   );
 }
