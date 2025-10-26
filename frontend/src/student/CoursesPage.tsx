@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, Users, Star } from 'lucide-react';
+import { Search, Users, Star, ChevronLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 type Course = {
@@ -38,9 +38,14 @@ export default function CoursesPage(): JSX.Element {
       <div className="max-w-6xl mx-auto">
         <div className="bg-gradient-to-r from-indigo-600 to-pink-500 rounded-xl p-6 mb-6 text-white shadow-md">
           <div className="flex items-center justify-between gap-4">
-            <div>
-              <h1 className="text-3xl font-bold">Explore courses</h1>
-              <p className="text-sm opacity-90">Find and join courses. Discover trending classes and your registered courses.</p>
+            <div className="flex items-center gap-4">
+              <button onClick={() => navigate(-1)} aria-label="Go back" className="w-10 h-10 rounded-md bg-white/20 flex items-center justify-center hover:bg-white/30">
+                <ChevronLeft size={18} />
+              </button>
+              <div>
+                <h1 className="text-3xl font-bold">Explore courses</h1>
+                <p className="text-sm opacity-90">Find and join courses. Discover trending classes and your registered courses.</p>
+              </div>
             </div>
             <div className="flex items-center gap-3">
               <div className="relative">
