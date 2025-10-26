@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from "react";
-import supabase from "../supabaseClient";
-import ChatBox from "./ChatBot";
+import React, { useState, useEffect } from 'react';
+import supabase from '../supabaseClient';
+import ChatBox from './ChatBot';
 
-export default function StudentDashboard({ onLogout }) {
-  const [activeTab, setActiveTab] = useState("profile");
-  const [userProfile, setUserProfile] = useState(null);
-  const [courses, setCourses] = useState([]);
-  const [progress, setProgress] = useState([]);
+export default function StudentDashboard({ onLogout }: { onLogout: () => void }) {
+  const [activeTab, setActiveTab] = useState('profile');
+  const [userProfile, setUserProfile] = useState<any | null>(null);
+  const [courses, setCourses] = useState<any[]>([]);
+  const [progress, setProgress] = useState<any[]>([]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -14,26 +14,23 @@ export default function StudentDashboard({ onLogout }) {
       const userId = session?.user?.id;
       if (!userId) return;
 
-      // Fetch user profile
       const { data: profileData, error: profileError } = await supabase
-        .from("users")
-        .select("*")
-        .eq("id", userId)
+        .from('users')
+        .select('*')
+        .eq('id', userId)
         .single();
       if (!profileError) setUserProfile(profileData);
 
-      // Fetch enrolled courses
       const { data: coursesData } = await supabase
-        .from("courses")
-        .select("*")
-        .eq("user_id", userId);
+        .from('courses')
+        .select('*')
+        .eq('user_id', userId);
       setCourses(coursesData || []);
 
-      // Fetch progress
       const { data: progressData } = await supabase
-        .from("progress")
-        .select("*")
-        .eq("user_id", userId);
+        .from('progress')
+        .select('*')
+        .eq('user_id', userId);
       setProgress(progressData || []);
     };
 
@@ -42,16 +39,15 @@ export default function StudentDashboard({ onLogout }) {
 
   return (
     <div style={styles.container}>
-      {/* Sidebar */}
       <aside style={styles.sidebar}>
-        <h2 style={styles.sidebarTitle}>{userProfile?.username || "Student"}</h2>
+        <h2 style={styles.sidebarTitle}>{userProfile?.username || 'Student'}</h2>
         <nav style={styles.nav}>
-          {["profile", "courses", "progress"].map((tab) => (
+          {['profile', 'courses', 'progress'].map((tab) => (
             <button
               key={tab}
               style={{
                 ...styles.navItem,
-                backgroundColor: activeTab === tab ? "#2563eb" : "transparent",
+                backgroundColor: activeTab === tab ? '#2563eb' : 'transparent',
               }}
               onClick={() => setActiveTab(tab)}
             >
@@ -61,14 +57,11 @@ export default function StudentDashboard({ onLogout }) {
         </nav>
       </aside>
 
-      {/* Main content */}
       <main style={styles.main}>
-        <button onClick={onLogout} style={styles.logoutBtn}>
-          Logout
-        </button>
+        <button onClick={onLogout} style={styles.logoutBtn}>Logout</button>
 
-        <div style={{ marginTop: "60px" }}>
-          {activeTab === "profile" && (
+        <div style={{ marginTop: '60px' }}>
+          {activeTab === 'profile' && (
             <div style={styles.card}>
               <h1 style={styles.cardTitle}>Profile</h1>
               {userProfile ? (
@@ -83,7 +76,7 @@ export default function StudentDashboard({ onLogout }) {
             </div>
           )}
 
-          {activeTab === "courses" && (
+          {activeTab === 'courses' && (
             <div style={styles.card}>
               <h1 style={styles.cardTitle}>My Courses</h1>
               {courses.length > 0 ? (
@@ -98,7 +91,7 @@ export default function StudentDashboard({ onLogout }) {
             </div>
           )}
 
-          {activeTab === "progress" && (
+          {activeTab === 'progress' && (
             <div style={styles.card}>
               <h1 style={styles.cardTitle}>Progress</h1>
               {progress.length > 0 ? (
@@ -116,81 +109,80 @@ export default function StudentDashboard({ onLogout }) {
           )}
         </div>
 
-        {/* ChatBox */}
         <ChatBox />
       </main>
     </div>
   );
 }
 
-const styles = {
+const styles: { [k: string]: React.CSSProperties } = {
   container: {
-    display: "flex",
-    minHeight: "100vh",
-    background: "linear-gradient(to bottom, #0f172a, #1e293b)",
-    color: "#f8fafc",
-    fontFamily: "Arial, sans-serif",
+    display: 'flex',
+    minHeight: '100vh',
+    background: 'linear-gradient(to bottom, #0f172a, #1e293b)',
+    color: '#f8fafc',
+    fontFamily: 'Arial, sans-serif',
   },
   sidebar: {
-    width: "220px",
-    backgroundColor: "#1e293b",
-    padding: "20px",
-    display: "flex",
-    flexDirection: "column",
+    width: '220px',
+    backgroundColor: '#1e293b',
+    padding: '20px',
+    display: 'flex',
+    flexDirection: 'column',
   },
   sidebarTitle: {
     fontSize: 20,
-    fontWeight: "bold",
+    fontWeight: 'bold',
     marginBottom: 20,
   },
   nav: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
   },
   navItem: {
-    padding: "12px",
-    backgroundColor: "transparent",
-    border: "none",
-    borderRadius: "6px",
-    color: "#f8fafc",
-    cursor: "pointer",
-    textAlign: "left",
-    transition: "background 0.2s",
+    padding: '12px',
+    backgroundColor: 'transparent',
+    border: 'none',
+    borderRadius: '6px',
+    color: '#f8fafc',
+    cursor: 'pointer',
+    textAlign: 'left',
+    transition: 'background 0.2s',
   },
   main: {
     flex: 1,
-    padding: "20px",
-    position: "relative",
+    padding: '20px',
+    position: 'relative',
   },
   logoutBtn: {
-    position: "absolute",
-    top: "20px",
-    right: "20px",
-    background: "#ef4444",
-    color: "#fff",
-    border: "none",
-    padding: "10px 15px",
-    borderRadius: "6px",
-    cursor: "pointer",
+    position: 'absolute',
+    top: '20px',
+    right: '20px',
+    background: '#ef4444',
+    color: '#fff',
+    border: 'none',
+    padding: '10px 15px',
+    borderRadius: '6px',
+    cursor: 'pointer',
   },
   card: {
-    backgroundColor: "#1e293b",
-    padding: "20px",
-    borderRadius: "10px",
-    boxShadow: "0 0 10px rgba(0,0,0,0.4)",
-    marginBottom: "20px",
+    backgroundColor: '#1e293b',
+    padding: '20px',
+    borderRadius: '10px',
+    boxShadow: '0 0 10px rgba(0,0,0,0.4)',
+    marginBottom: '20px',
   },
   cardTitle: {
-    fontSize: "22px",
-    marginBottom: "10px",
+    fontSize: '22px',
+    marginBottom: '10px',
   },
   profileInfo: {
-    lineHeight: "1.6",
-    color: "#f8fafc",
+    lineHeight: '1.6',
+    color: '#f8fafc',
   },
   list: {
-    paddingLeft: "20px",
-    lineHeight: "1.6",
+    paddingLeft: '20px',
+    lineHeight: '1.6',
   },
 };

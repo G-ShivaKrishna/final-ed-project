@@ -1,38 +1,37 @@
-import React, { useState, useEffect } from "react";
-import supabase from "./supabaseClient";
-import { Link, useNavigate } from "react-router-dom";
-import "./Login.css";
+import React, { useState, useEffect } from 'react';
+import supabase from './supabaseClient';
+import { Link, useNavigate } from 'react-router-dom';
+import './Login.css';
 
-export default function Login() {
-  const [identifier, setIdentifier] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-  const [forgot, setForgot] = useState(false);
-  const [fadeIn, setFadeIn] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
+export default function Login(): JSX.Element {
+  const [identifier, setIdentifier] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [error, setError] = useState<string>('');
+  const [message, setMessage] = useState<string>('');
+  const [forgot, setForgot] = useState<boolean>(false);
+  const [fadeIn, setFadeIn] = useState<boolean>(false);
+  const [showPassword, setShowPassword] = useState<boolean>(false);
   const navigate = useNavigate();
 
   useEffect(() => setFadeIn(true), []);
 
-  const handleLogin = async (e) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
-    setMessage("");
+    setError('');
+    setMessage('');
 
     let emailToLogin = identifier;
-    let role = null;
+    let role: string | null = null;
 
-    // If input does not contain '@', treat it as username
-    if (!identifier.includes("@")) {
+    if (!identifier.includes('@')) {
       const { data: user, error: findError } = await supabase
-        .from("users")
-        .select("email, role")
-        .eq("username", identifier)
+        .from('users')
+        .select('email, role')
+        .eq('username', identifier)
         .single();
 
       if (findError || !user) {
-        setError("No account with that username.");
+        setError('No account with that username.');
         return;
       }
       emailToLogin = user.email;
@@ -49,59 +48,56 @@ export default function Login() {
       return;
     }
 
-    // If role wasn't fetched via username, get it from email
     if (!role) {
       const { data: userInfo, error: roleError } = await supabase
-        .from("users")
-        .select("role")
-        .eq("email", emailToLogin)
+        .from('users')
+        .select('role')
+        .eq('email', emailToLogin)
         .single();
 
       if (roleError || !userInfo) {
-        setError("Unable to fetch user role.");
+        setError('Unable to fetch user role.');
         return;
       }
       role = userInfo.role;
     }
 
-    setMessage("Login successful! Redirecting...");
+    setMessage('Login successful! Redirecting...');
 
-    // Redirect based on role
     setTimeout(() => {
-      if (role === "student") navigate("/student-dashboard");
-      else if (role === "instructor") navigate("/instructor-dashboard");
-      else navigate("/"); // fallback
+      if (role === 'student') navigate('/student-dashboard');
+      else if (role === 'instructor') navigate('/instructor-dashboard');
+      else navigate('/');
     }, 800);
   };
 
-  const handlePasswordReset = async (e) => {
+  const handlePasswordReset = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
-    setMessage("");
+    setError('');
+    setMessage('');
 
     if (!identifier) {
-      setError("Enter your email to reset password.");
+      setError('Enter your email to reset password.');
       return;
     }
 
-    // Check if email exists
     const { data: userExists } = await supabase
-      .from("users")
-      .select("email")
-      .eq("email", identifier)
+      .from('users')
+      .select('email')
+      .eq('email', identifier)
       .single();
 
     if (!userExists) {
-      setError("No account found with that email.");
+      setError('No account found with that email.');
       return;
     }
 
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(identifier);
-    setMessage(resetError ? resetError.message : "Password reset email sent! Check your inbox.");
+    setMessage(resetError ? resetError.message : 'Password reset email sent! Check your inbox.');
   };
 
   return (
-    <div className={`auth-wrapper ${fadeIn ? "fade-in" : ""}`}>
+    <div className={`auth-wrapper ${fadeIn ? 'fade-in' : ''}`}>
       <div className="auth-card">
         <div className="auth-brand">
           <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
@@ -125,7 +121,7 @@ export default function Login() {
 
             <div className="password-row">
               <label className="visually-hidden">Password</label>
-              <input className="auth-input" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" type={showPassword ? "text" : "password"} />
+              <input className="auth-input" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" type={showPassword ? 'text' : 'password'} />
               <button type="button" aria-label="Toggle password visibility" className="eye-toggle" onClick={() => setShowPassword(s => !s)}>{showPassword ? 'Hide' : 'Show'}</button>
             </div>
 
@@ -150,5 +146,4 @@ export default function Login() {
       </div>
     </div>
   );
-
 }

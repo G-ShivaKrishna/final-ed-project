@@ -1,54 +1,53 @@
-import React, { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
-import supabase from "./supabaseClient";
-import "./Login.css";
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import supabase from './supabaseClient';
+import './Login.css';
 
-export default function Signup() {
+export default function Signup(): JSX.Element {
   const [form, setForm] = useState({
-    username: "",
-    email: "",
-    password: "",
-    confirmPass: "",
-    role: "student",
+    username: '',
+    email: '',
+    password: '',
+    confirmPass: '',
+    role: 'student',
   });
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-  const [fadeIn, setFadeIn] = useState(false);
-  const [fadeOut, setFadeOut] = useState(false);
+  const [error, setError] = useState<string>('');
+  const [message, setMessage] = useState<string>('');
+  const [fadeIn, setFadeIn] = useState<boolean>(false);
+  const [fadeOut, setFadeOut] = useState<boolean>(false);
   const navigate = useNavigate();
-  const timerRef = useRef(null);
+  const timerRef = useRef<number | null>(null);
   const redirectDelay = 4000; // ms
 
   useEffect(() => {
     setFadeIn(true);
   }, []);
 
-  const handleChange = (e) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm({ ...form, [e.target.name]: e.target.value });
   };
 
-  const handleSignup = async (e) => {
+  const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
-    setMessage("");
+    setError('');
+    setMessage('');
     setFadeOut(false);
 
     if (!form.username || !form.email || !form.password || !form.confirmPass) {
-      setError("All fields are required.");
+      setError('All fields are required.');
       return;
     }
 
     if (form.password !== form.confirmPass) {
-      setError("Passwords do not match.");
+      setError('Passwords do not match.');
       return;
     }
 
-    // Signup in Supabase Auth
     const { data, error: signUpError } = await supabase.auth.signUp({
       email: form.email,
       password: form.password,
       options: {
-        emailRedirectTo: window.location.origin + "/login", // optional redirect after verification
+        emailRedirectTo: window.location.origin + '/login',
       },
     });
 
@@ -57,15 +56,10 @@ export default function Signup() {
       return;
     }
 
-    // In some Supabase projects the `signUp` call does not return `data.user`
-    // immediately (email confirmation flow). Guard against accessing
-    // `data.user.id` when it's undefined. Only insert into `users` table if
-    // the auth user id is available now; otherwise skip DB insert and rely on
-    // server-side / post-confirmation logic to create the row.
-    const userId = data?.user?.id;
+    const userId = (data as any)?.user?.id;
 
     if (userId) {
-      const { error: dbError } = await supabase.from("users").insert([
+      const { error: dbError } = await supabase.from('users').insert([
         {
           id: userId,
           email: form.email,
@@ -79,28 +73,20 @@ export default function Signup() {
         return;
       }
     } else {
-      // Not fatal: log for debugging and continue to show the user the next step.
-      // The user will still receive a verification email and can log in after
-      // verifying. Creating the `users` row can be handled later if desired.
       // eslint-disable-next-line no-console
-      console.warn("signUp returned no user id (email confirmation may be required) — skipping DB insert for now.");
+      console.warn('signUp returned no user id (email confirmation may be required) — skipping DB insert for now.');
     }
 
-    // Show a confirmation message and redirect the user to the login page
-    // so they can sign in after verifying their email.
     setMessage(
-      "Signup successful! Please check your email and click the verification link before logging in. Redirecting to login..."
+      'Signup successful! Please check your email and click the verification link before logging in. Redirecting to login...'
     );
 
-    // schedule redirect but keep a ref so the user can cancel it by clicking
-    // the button (or if the component unmounts we clear it)
-    timerRef.current = setTimeout(() => {
+    timerRef.current = window.setTimeout(() => {
       timerRef.current = null;
-      navigate("/login");
+      navigate('/login');
     }, redirectDelay);
   };
 
-  // cleanup timer on unmount
   useEffect(() => {
     return () => {
       if (timerRef.current) {
@@ -111,8 +97,7 @@ export default function Signup() {
   }, []);
 
   return (
-    <div className={`auth-wrapper ${fadeIn ? "fade-in" : ""} ${fadeOut ? "fade-out" : ""}`}>
-
+    <div className={`auth-wrapper ${fadeIn ? 'fade-in' : ''} ${fadeOut ? 'fade-out' : ''}`}>
       <div className="auth-card">
         <h2 className="auth-title">Create an account</h2>
 
@@ -129,7 +114,7 @@ export default function Signup() {
                     clearTimeout(timerRef.current);
                     timerRef.current = null;
                   }
-                  navigate("/login");
+                  navigate('/login');
                 }}
               >
                 Go to login now
@@ -161,11 +146,11 @@ export default function Signup() {
 
           <div className="radio-group" role="radiogroup" aria-label="Select role">
             <label className="radio-label" htmlFor="role-student">
-              <input id="role-student" type="radio" name="role" value="student" checked={form.role === "student"} onChange={handleChange} required /> Student
+              <input id="role-student" type="radio" name="role" value="student" checked={form.role === 'student'} onChange={handleChange} required /> Student
             </label>
 
             <label className="radio-label" htmlFor="role-instructor">
-              <input id="role-instructor" type="radio" name="role" value="instructor" checked={form.role === "instructor"} onChange={handleChange} /> Instructor
+              <input id="role-instructor" type="radio" name="role" value="instructor" checked={form.role === 'instructor'} onChange={handleChange} /> Instructor
             </label>
           </div>
 

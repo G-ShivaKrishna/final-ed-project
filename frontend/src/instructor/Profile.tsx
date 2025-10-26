@@ -1,18 +1,17 @@
-// src/instructor/Profile.js
-import { useState, useEffect } from "react";
-import supabase from "../supabaseClient";
+import React, { useState, useEffect } from 'react';
+import supabase from '../supabaseClient';
 
-export default function Profile() {
-  const [userData, setUserData] = useState(null);
+export default function Profile(): JSX.Element {
+  const [userData, setUserData] = useState<any | null>(null);
 
   useEffect(() => {
     const fetchUser = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         const { data, error } = await supabase
-          .from("users")
-          .select("username, email, role")
-          .eq("id", session.user.id)
+          .from('users')
+          .select('username, email, role')
+          .eq('id', session.user.id)
           .single();
 
         if (!error) setUserData(data);

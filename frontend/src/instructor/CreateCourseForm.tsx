@@ -1,29 +1,27 @@
-// src/instructor/CreateCourseForm.js
-import React, { useState } from "react";
-import supabase from "../supabaseClient";
+import React, { useState } from 'react';
+import supabase from '../supabaseClient';
 
-export default function CreateCourseForm() {
-  const [courseName, setCourseName] = useState("");
-  const [courseId, setCourseId] = useState("");
-  const [message, setMessage] = useState("");
+export default function CreateCourseForm(): JSX.Element {
+  const [courseName, setCourseName] = useState('');
+  const [courseId, setCourseId] = useState('');
+  const [message, setMessage] = useState('');
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Get current user session to identify instructor
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
-      setMessage("You must be logged in to create a course.");
+      setMessage('You must be logged in to create a course.');
       return;
     }
 
     const instructorId = session.user.id;
 
     try {
-      const response = await fetch("http://localhost:8000/users/create-course/", {
-        method: "POST",
+      const response = await fetch('http://localhost:8000/users/create-course/', {
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           name: courseName,
@@ -35,15 +33,16 @@ export default function CreateCourseForm() {
       const data = await response.json();
 
       if (response.ok) {
-        setMessage(data.message || "Course created successfully!");
-        setCourseName("");
-        setCourseId("");
+        setMessage(data.message || 'Course created successfully!');
+        setCourseName('');
+        setCourseId('');
       } else {
-        setMessage(data.error || data.message || "Error creating course.");
+        setMessage(data.error || data.message || 'Error creating course.');
       }
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.error(error);
-      setMessage("Network error: could not create course.");
+      setMessage('Network error: could not create course.');
     }
   };
 

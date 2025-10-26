@@ -1,26 +1,23 @@
-// src/instructor/CoursesList.js
-import React, { useEffect, useState } from "react";
-import supabase from "../supabaseClient";
+import React, { useEffect, useState } from 'react';
+import supabase from '../supabaseClient';
 
-export default function CoursesList() {
-  const [courses, setCourses] = useState([]);
+export default function CoursesList(): JSX.Element {
+  const [courses, setCourses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
 
   useEffect(() => {
     const fetchCourses = async () => {
       try {
-        // Get current user session to identify instructor
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) {
-          setError("You must be logged in.");
+          setError('You must be logged in.');
           setLoading(false);
           return;
         }
 
         const instructorId = session.user.id;
 
-        // Fetch courses created by this instructor from Django API
         const response = await fetch(
           `http://localhost:8000/users/instructor-courses/?instructor_id=${instructorId}`
         );
@@ -30,11 +27,12 @@ export default function CoursesList() {
         if (response.ok) {
           setCourses(data);
         } else {
-          setError(data.error || data.message || "Failed to fetch courses.");
+          setError(data.error || data.message || 'Failed to fetch courses.');
         }
       } catch (err) {
+        // eslint-disable-next-line no-console
         console.error(err);
-        setError("Network error while fetching courses.");
+        setError('Network error while fetching courses.');
       } finally {
         setLoading(false);
       }

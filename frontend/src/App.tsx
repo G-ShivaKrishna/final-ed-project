@@ -1,13 +1,12 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import Signup from './Signup';
 import Login from './Login';
 import StudentDashboard from './student/StudentDashboard';
 import InstructorDashboard from './instructor/InstructorDashboard';
-import { useState, useEffect } from 'react';
 import supabase from './supabaseClient';
-import { useNavigate } from 'react-router-dom';
 
-function AppWrapper() {
+function AppWrapper(): JSX.Element {
   return (
     <Router>
       <App />
@@ -15,9 +14,9 @@ function AppWrapper() {
   );
 }
 
-function App() {
-  const [session, setSession] = useState(null);
-  const [role, setRole] = useState(null);
+function App(): JSX.Element {
+  const [session, setSession] = useState<any | null>(null);
+  const [role, setRole] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchSession = async () => {
@@ -37,10 +36,10 @@ function App() {
 
     fetchSession();
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((_event: any, session: any) => {
       setSession(session);
       if (session) {
-        supabase.from('users').select('role').eq('id', session.user.id).single().then(({ data }) => {
+        supabase.from('users').select('role').eq('id', session.user.id).single().then(({ data }: any) => {
           setRole(data?.role ?? null);
         });
       } else {
@@ -51,7 +50,7 @@ function App() {
     return () => listener?.subscription?.unsubscribe();
   }, []);
 
-  const handleLogout = async (navigate) => {
+  const handleLogout = async (navigate: any) => {
     await supabase.auth.signOut();
     setSession(null);
     setRole(null);
@@ -61,8 +60,7 @@ function App() {
   return <RoutesWrapper session={session} role={role} onLogout={handleLogout} />;
 }
 
-// Separate component inside Router for using useNavigate
-function RoutesWrapper({ session, role, onLogout }) {
+function RoutesWrapper({ session, role, onLogout }: { session: any; role: string | null; onLogout: (nav: any) => void; }) {
   const navigate = useNavigate();
 
   return (
