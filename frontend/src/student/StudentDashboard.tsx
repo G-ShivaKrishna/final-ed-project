@@ -241,7 +241,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
             </button>
 
             <div className="relative">
-              <button onClick={() => setMenuOpen((v) => !v)} className="p-2 rounded-lg bg-white shadow-sm hover:shadow-md" aria-haspopup="menu" aria-expanded={menuOpen}>
+              <button onClick={() => setMenuOpen((v) => !v)} className="h-10 w-10 flex items-center justify-center rounded-lg bg-white shadow-sm hover:shadow-md" aria-haspopup="menu" aria-expanded={menuOpen}>
                 <MoreVertical size={20} />
               </button>
 
@@ -258,9 +258,9 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
         </header>
 
         {/* Recent posts: latest assignment posts */}
-        <div className="mb-6">
+          <div className="mb-6">
           <h3 className="text-sm text-slate-600 font-medium mb-3">Recent posts</h3>
-          <div className="flex flex-col sm:flex-row gap-3">
+          <div className="flex flex-col sm:flex-row gap-3 items-stretch">
             {recentPosts.map((p) => (
               <div key={p.id} className="bg-white rounded-lg p-3 shadow-sm flex-1 min-w-0">
                 <div className="flex items-start justify-between">
@@ -367,8 +367,8 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
             </div>
 
               <div className="bg-white rounded-xl p-4 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-medium text-slate-700 mb-3">Joined courses</h4>
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-medium text-slate-700">Joined courses</h4>
                   <button onClick={() => navigate('/courses')} className="text-xs text-indigo-600 hover:underline">View all</button>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">

@@ -58,36 +58,38 @@ export default function CoursesPage(): JSX.Element {
 
         <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {filtered.map((c) => (
-            <article key={c.id} className="bg-white rounded-2xl p-5 shadow-lg hover:scale-[1.01] transition-transform duration-150">
+            <article key={c.id} className="bg-white rounded-2xl p-5 shadow-md hover:shadow-lg transform hover:-translate-y-1 transition-all duration-150 flex flex-col h-full">
               <div className="flex items-start gap-4">
-                <div className={`w-14 h-14 rounded-xl flex items-center justify-center text-white font-semibold text-lg ${c.color === 'purple' ? 'bg-violet-500' : c.color === 'blue' ? 'bg-blue-500' : c.color === 'gray' ? 'bg-gray-500' : c.color === 'indigo' ? 'bg-indigo-600' : c.color === 'green' ? 'bg-green-600' : 'bg-rose-500'}`}>
-                  {c.code.split(/\d/)[0]}
+                <div className={`w-16 h-16 flex-shrink-0 rounded-lg flex items-center justify-center text-white font-bold text-lg ${c.color === 'purple' ? 'bg-violet-500' : c.color === 'blue' ? 'bg-blue-500' : c.color === 'gray' ? 'bg-gray-500' : c.color === 'indigo' ? 'bg-indigo-600' : c.color === 'green' ? 'bg-green-600' : 'bg-rose-500'}`}>
+                  <span className="tracking-wide">{c.code.replace(/\d/g, '').slice(0,4)}</span>
                 </div>
 
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
                       <h3 className="text-lg font-semibold text-slate-800 truncate">{c.title}</h3>
-                      <div className="text-xs text-slate-500 mt-1">{c.code} • Instructor: {c.instructor}</div>
+                      <div className="text-xs text-slate-500 mt-1 truncate">{c.code} • Instructor: {c.instructor}</div>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right ml-2 hidden sm:block">
                       <div className="text-sm font-semibold text-slate-800">{c.students}</div>
                       <div className="text-xs text-slate-400">students</div>
                     </div>
                   </div>
 
-                  <p className="text-sm text-slate-600 mt-3 line-clamp-2">A well-designed course that covers key topics and practical examples to help you master the subject.</p>
+                  <p className="text-sm text-slate-600 mt-3 overflow-hidden text-ellipsis" style={{ WebkitLineClamp: 3, display: '-webkit-box', WebkitBoxOrient: 'vertical' }}>
+                    A well-designed course that covers key topics and practical examples to help you master the subject.
+                  </p>
+                </div>
+              </div>
 
-                  <div className="mt-4 flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-xs text-slate-500">
-                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 rounded"> <Users size={14} /> {c.students}</span>
-                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-yellow-50 text-yellow-700 rounded"> <Star size={12} /> Popular</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => navigate(`/courses/${c.id}`)} className="px-4 py-2 rounded-md bg-indigo-600 text-white">Open</button>
-                      <button className="px-4 py-2 rounded-md border">Details</button>
-                    </div>
-                  </div>
+              <div className="mt-4 flex items-center justify-between mt-auto">
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  <span className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 rounded"> <Users size={14} /> {c.students}</span>
+                  <span className="inline-flex items-center gap-1 px-2 py-1 bg-yellow-50 text-yellow-700 rounded"> <Star size={12} /> Popular</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => navigate(`/courses/${c.id}`)} className="px-4 py-2 rounded-md bg-indigo-600 text-white">Open</button>
+                  <button className="px-4 py-2 rounded-md border">Details</button>
                 </div>
               </div>
             </article>
