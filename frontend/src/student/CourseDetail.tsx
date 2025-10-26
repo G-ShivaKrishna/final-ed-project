@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft } from 'lucide-react';
 
 type Material = { id: string; title: string; uploadedAt: string; link?: string; description?: string; type?: string };
-type Assignment = { id: string; title: string; due_date: string; status: string; points?: number; description?: string; postedAt?: string };
+type Assignment = { id: string; title: string; due_date: string; status: string; points?: number; description?: string; postedAt?: string; submitted_file?: string };
 
 const SAMPLE_COURSES: { id: string; code: string; title: string }[] = [
   { id: 'c1', code: '4-1 FAM', title: 'Foundations of Applied Math' },
@@ -58,7 +58,44 @@ export default function CourseDetail(): JSX.Element {
   const [tab, setTab] = React.useState<'syllabus' | 'assignments'>('syllabus');
 
   const syllabus = SAMPLE_SYLLABUS[id as string] ?? [];
-  const assignments = SAMPLE_ASSIGNMENTS[id as string] ?? [];
+  const initialAssignments = SAMPLE_ASSIGNMENTS[id as string] ?? [];
+  const [assignmentsState, setAssignmentsState] = React.useState<Assignment[]>(initialAssignments);
+
+  // file upload refs/state for submitting assignments (PDF only)
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const [pendingUploadFor, setPendingUploadFor] = React.useState<string | number | null>(null);
+  const [uploadError, setUploadError] = React.useState<string | null>(null);
+  const [uploading, setUploading] = React.useState(false);
+  
+
+  function markAsSubmitted(id: string | number, filename?: string) {
+    setAssignmentsState((prev) => prev.map((m) => (m.id === id ? { ...m, status: m.status === 'graded' ? m.status : 'submitted', submitted_file: filename ?? m.submitted_file } : m)));
+  }
+
+  function handleFileChange(e: any) {
+    const file = e.target.files?.[0];
+    const idFor = pendingUploadFor;
+    e.currentTarget.value = '';
+    if (!file || idFor == null) {
+      setPendingUploadFor(null);
+      return;
+    }
+
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    if (!isPdf) {
+      setUploadError('Please upload a PDF file.');
+      setPendingUploadFor(null);
+      return;
+    }
+
+    setUploading(true);
+    setUploadError(null);
+    setTimeout(() => {
+      markAsSubmitted(idFor, file.name);
+      setUploading(false);
+      setPendingUploadFor(null);
+    }, 700);
+  }
 
   return (
     <div className="min-h-screen p-6 bg-gradient-to-b from-gray-50 to-white">
@@ -101,11 +138,11 @@ export default function CourseDetail(): JSX.Element {
             </div>
           ) : (
             <div>
-              {assignments.length === 0 ? (
+              {assignmentsState.length === 0 ? (
                 <div className="text-sm text-slate-500">No assignments posted yet.</div>
               ) : (
                 <ul className="space-y-3">
-                  {assignments.map((a) => (
+                  {assignmentsState.map((a) => (
                     <li key={a.id} className="p-3 border rounded">
                       <div className="flex items-center justify-between">
                         <div>
@@ -116,7 +153,24 @@ export default function CourseDetail(): JSX.Element {
                         </div>
                         <div className="text-xs text-slate-500">{a.points ?? '-'} pts</div>
                       </div>
-                      <div className="mt-2 text-xs text-slate-600">Status: {a.status}</div>
+                      <div className="mt-2 text-xs text-slate-600">Status: {a.status}{a.submitted_file ? ` — ${a.submitted_file}` : ''}</div>
+                      <div className="mt-2">
+                        {a.status === 'graded' ? (
+                          <span className="text-xs px-2 py-1 border rounded text-slate-500">Graded</span>
+                        ) : a.status === 'submitted' ? (
+                          <span className="text-xs px-2 py-1 border rounded text-slate-700">Submitted</span>
+                        ) : (
+                          (uploading && pendingUploadFor === a.id) ? (
+                            <button className="text-xs px-2 py-1 border rounded bg-indigo-400 text-white opacity-80" disabled>Uploading...</button>
+                          ) : (
+                            <button onClick={() => {
+                              setUploadError(null);
+                              setPendingUploadFor(a.id);
+                              setTimeout(() => fileInputRef.current?.click(), 50);
+                            }} className="text-xs px-2 py-1 border rounded bg-indigo-600 text-white">Submit</button>
+                          )
+                        )}
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -124,6 +178,15 @@ export default function CourseDetail(): JSX.Element {
             </div>
           )}
         </div>
+        {uploadError && (
+          <div className="fixed top-6 right-6 z-50 bg-red-50 text-red-700 border border-red-200 px-4 py-2 rounded flex items-center gap-3">
+            <div className="text-sm">{uploadError}</div>
+            <button onClick={() => setUploadError(null)} className="text-sm text-red-600 underline">Dismiss</button>
+          </div>
+        )}
+
+        {/* hidden file input for assignment submission (PDF only) - always present */}
+        <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden" onChange={handleFileChange} />
       </div>
     </div>
   );

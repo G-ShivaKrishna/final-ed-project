@@ -15,6 +15,7 @@ type AssignmentWithCourse = {
     code?: string;
     color?: string;
   };
+  submitted_file?: string;
 };
 
 type GroupedAssignment = {
@@ -87,6 +88,12 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
   };
 
   const navigate = useNavigate();
+
+  // File upload refs / state for submitting assignments (PDF-only)
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [pendingUploadFor, setPendingUploadFor] = useState<string | number | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   // Menu state & refs for the header options menu
   const [menuOpen, setMenuOpen] = useState(false);
@@ -222,9 +229,57 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
   const QuickActionButtons = () => (
     <>
       <button onClick={() => navigate('/grades')} className="text-left px-3 py-2 border rounded-md">View grades</button>
+      <button onClick={() => setAssignmentsOpen(true)} className="text-left px-3 py-2 border rounded-md">Assignments</button>
       <button onClick={() => navigate('/inbox')} className="text-left px-3 py-2 border rounded-md">Inbox</button>
     </>
   );
+
+  const [assignmentsOpen, setAssignmentsOpen] = useState(false);
+  const [assignmentsState, setAssignmentsState] = useState<AssignmentWithCourse[]>(() => groupedAssignments.flatMap((g) => g.assignments));
+
+  // keep assignmentsState in sync if groupedAssignments ever changes
+  useEffect(() => {
+    setAssignmentsState(groupedAssignments.flatMap((g) => g.assignments));
+  }, [groupedAssignments]);
+
+  // mark assignment submitted (optionally attach filename)
+  function markAsSubmitted(id: string | number, filename?: string) {
+    setAssignmentsState((prev) => prev.map((m) => (m.id === id ? { ...m, status: m.status === 'graded' ? m.status : 'submitted', submitted_file: filename ?? m.submitted_file } : m)));
+  }
+
+  function handleInitiateUpload(id: string | number) {
+    setUploadError(null);
+    setPendingUploadFor(id);
+    // open file picker
+    setTimeout(() => fileInputRef.current?.click(), 50);
+  }
+
+  function handleFileChange(e: any) {
+    const file = e.target.files?.[0];
+    const id = pendingUploadFor;
+    // clear the input so same-file re-uploads are possible later
+    e.currentTarget.value = '';
+    if (!file || id == null) {
+      setPendingUploadFor(null);
+      return;
+    }
+
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    if (!isPdf) {
+      setUploadError('Please upload a PDF file.');
+      setPendingUploadFor(null);
+      return;
+    }
+
+    // simulate upload
+    setUploading(true);
+    setUploadError(null);
+    setTimeout(() => {
+      markAsSubmitted(id, file.name);
+      setUploading(false);
+      setPendingUploadFor(null);
+    }, 700);
+  }
 
   return (
   <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-50 p-6 pointer-events-auto">
@@ -251,6 +306,13 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
             )}
           </div>
         </header>
+
+        {uploadError && (
+          <div className="fixed top-6 right-6 z-50 bg-red-50 text-red-700 border border-red-200 px-4 py-2 rounded flex items-center gap-3">
+            <div className="text-sm">{uploadError}</div>
+            <button onClick={() => setUploadError(null)} className="text-sm text-red-600 underline">Dismiss</button>
+          </div>
+        )}
 
         {/* Recent posts: latest assignment posts */}
           <div className="mb-6">
@@ -412,6 +474,64 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
         <div className="mt-8">
           <ChatBox />
         </div>
+        {/* Assignments Modal (quick-view) */}
+        {assignmentsOpen && (
+          (() => {
+            const flat = groupedAssignments.flatMap((g) => g.assignments).sort((a, b) => new Date(b.due_date).getTime() - new Date(a.due_date).getTime());
+            return (
+              <div className="fixed inset-0 z-60 flex items-center justify-center">
+                <div className="absolute inset-0 bg-black/40" onClick={() => setAssignmentsOpen(false)} />
+                <div className="relative bg-white rounded-lg shadow-lg w-full max-w-3xl p-6 z-50">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold">All assignments</h3>
+                    <button onClick={() => setAssignmentsOpen(false)} className="text-sm text-slate-500">Close</button>
+                  </div>
+
+                  <div className="max-h-[60vh] overflow-auto space-y-3">
+                      {flat.length === 0 ? (
+                        <div className="text-sm text-slate-500">No assignments found.</div>
+                      ) : (
+                        (() => {
+                          // pending first (not graded), then graded at bottom — each section newest -> oldest
+                          const pending = assignmentsState.filter((x) => x.status !== 'graded').sort((a, b) => new Date(b.due_date).getTime() - new Date(a.due_date).getTime());
+                          const completed = assignmentsState.filter((x) => x.status === 'graded').sort((a, b) => new Date(b.due_date).getTime() - new Date(a.due_date).getTime());
+                          const ordered = [...pending, ...completed];
+                          return ordered.map((a) => (
+                            <div key={a.id} className="p-3 border rounded">
+                              <div className="flex items-start justify-between gap-4">
+                                <div>
+                                  <div className="text-sm font-medium">{a.title}</div>
+                                  <div className="text-xs text-slate-500">{a.course?.code} • {formatDate(a.due_date)}</div>
+                                </div>
+                                <div className="text-right flex flex-col items-end gap-2">
+                                  <div className="text-xs text-slate-500">{a.points ?? '-'} pts</div>
+                                  <div className={`mt-1 inline-block px-2 py-1 text-xs rounded-full ${statusColor(a.status)}`}>{a.status}</div>
+                                  <div className="flex items-center gap-2">
+                                    {a.status === 'graded' ? (
+                                      <span className="text-xs px-2 py-1 border rounded text-slate-500">Graded</span>
+                                    ) : a.status === 'submitted' ? (
+                                      <span className="text-xs px-2 py-1 border rounded text-slate-700">Submitted</span>
+                                    ) : (
+                                      (uploading && pendingUploadFor === a.id) ? (
+                                        <button className="text-xs px-2 py-1 border rounded bg-indigo-400 text-white opacity-80" disabled>Uploading...</button>
+                                      ) : (
+                                        <button onClick={() => handleInitiateUpload(a.id)} className="text-xs px-2 py-1 border rounded bg-indigo-600 text-white">Submit</button>
+                                      )
+                                    )}
+                                    <button onClick={() => navigate(`/courses/${a.course?.id}`)} className="text-xs px-2 py-1 border rounded text-indigo-600">Go to course</button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ));
+                        })()
+                      )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()
+        )}
         {/* Join Course Modal */}
         {joinModalOpen && (
           <div className="fixed inset-0 z-60 flex items-center justify-center">
@@ -439,6 +559,8 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
             </div>
           </div>
         )}
+        {/* hidden file input for assignment submission (PDF only) - always present so clicks work from any modal */}
+        <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden" onChange={handleFileChange} />
       </div>
     </div>
   );
