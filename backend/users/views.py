@@ -251,3 +251,7 @@ def dashboard_summary(request):
 	except Exception as e:
 		return Response({"error": str(e)}, status=500)
 
+from django.http import JsonResponse
+
+def health_check(request):
+    return JsonResponse({"status": "ok"})

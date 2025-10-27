@@ -12,12 +12,15 @@ import CourseDetail from './student/CourseDetail';
 import ProfilePage from './student/ProfilePage';
 import supabase from './supabaseClient';
 import { UserProvider } from './lib/UserContext';
+import ServerStatusWrapper from './ServerStatusWrapper'; // 🆕 added
 
 function AppWrapper(): JSX.Element {
   return (
     <Router>
       <UserProvider>
-        <App />
+        <ServerStatusWrapper> {/* 🧱 wrap entire app */}
+          <App />
+        </ServerStatusWrapper>
       </UserProvider>
     </Router>
   );
@@ -48,9 +51,14 @@ function App(): JSX.Element {
     const { data: listener } = supabase.auth.onAuthStateChange((_event: any, session: any) => {
       setSession(session);
       if (session) {
-        supabase.from('users').select('role').eq('id', session.user.id).single().then(({ data }: any) => {
-          setRole(data?.role ?? null);
-        });
+        supabase
+          .from('users')
+          .select('role')
+          .eq('id', session.user.id)
+          .single()
+          .then(({ data }: any) => {
+            setRole(data?.role ?? null);
+          });
       } else {
         setRole(null);
       }
@@ -69,7 +77,15 @@ function App(): JSX.Element {
   return <RoutesWrapper session={session} role={role} onLogout={handleLogout} />;
 }
 
-function RoutesWrapper({ session, role, onLogout }: { session: any; role: string | null; onLogout: (nav: any) => void; }) {
+function RoutesWrapper({
+  session,
+  role,
+  onLogout,
+}: {
+  session: any;
+  role: string | null;
+  onLogout: (nav: any) => void;
+}) {
   const navigate = useNavigate();
 
   return (
@@ -96,16 +112,16 @@ function RoutesWrapper({ session, role, onLogout }: { session: any; role: string
       <Route path="/student-dashboard" element={<StudentDashboard onLogout={() => onLogout(navigate)} />} />
       <Route path="/instructor-dashboard" element={<InstructorDashboard onLogout={() => onLogout(navigate)} />} />
       <Route path="/grades" element={<ViewGrades />} />
-  <Route path="/courses" element={<CoursesPage />} />
+      <Route path="/courses" element={<CoursesPage />} />
       <Route path="/courses/:id" element={<CourseDetail />} />
-  <Route path="/profile" element={<ProfilePage />} />
+      <Route path="/profile" element={<ProfilePage />} />
       <Route path="/inbox" element={<InboxPage />} />
       <Route path="/course-settings" element={<CourseSettings />} />
-  
-        {/* backwards-compatible redirect for legacy/capitalized path */}
-        <Route path="/Dashboard" element={<Navigate to="/student-dashboard" replace />} />
-        {/* catch-all: redirect unknown routes to root */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+
+      {/* backwards-compatible redirect for legacy/capitalized path */}
+      <Route path="/Dashboard" element={<Navigate to="/student-dashboard" replace />} />
+      {/* catch-all: redirect unknown routes to root */}
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
