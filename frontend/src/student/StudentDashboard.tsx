@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { ChevronRight, MoreVertical, User, Calendar, Clock, CheckCircle, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ChatBox from './ChatBot';
@@ -228,67 +228,83 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
     }
   }, [joinModalOpen]);
 
-  // Derived data: joined courses and recent posts
-  // Build map of course -> latest assignment date, then pick 3 most recent courses
-  const courseMap = new Map<string | number, { course: { id: string | number; code?: string; color?: string }; latest: number }>();
-  groupedAssignments.forEach((g) => {
-    g.assignments.forEach((a) => {
-      if (a.course?.id != null) {
-        const id = a.course.id;
-        const ts = new Date(a.due_date).getTime();
-        const prev = courseMap.get(id);
-        if (!prev || ts > prev.latest) {
-          courseMap.set(id, { course: a.course as any, latest: ts });
-        }
-      }
-    });
-  });
-  const joinedCourses = Array.from(courseMap.values())
-    .sort((a, b) => b.latest - a.latest)
-    .map((x) => x.course)
-    .slice(0, 3);
+  // Joined courses (fetched from enrollments -> courses)
+  const [joinedCourses, setJoinedCourses] = useState<{ id: string | number; code?: string; color?: string }[]>([]);
 
-  const recentPosts = groupedAssignments
-    .flatMap((g) => g.assignments.map((a) => ({ ...a, groupDate: g.date })))
-    .sort((x, y) => new Date(y.due_date).getTime() - new Date(x.due_date).getTime())
-    .slice(0, 3);
+  async function fetchEnrolledCourses() {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id;
+      if (!userId) return;
 
-  // Mini 7-day calendar with status per day based on assignments
-  const next7Days = Array.from({ length: 7 }).map((_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() + i);
-    return d;
-  });
+      // enrollments.course_id references courses.course_id (text); select related course row
+      const resp = await supabase
+        .from('enrollments')
+        .select('course: courses(id, course_id, name, color)')
+        .eq('student_id', userId)
+        .order('joined_at', { ascending: false })
+        .execute ? await (supabase as any).from('enrollments').select('course: courses(id, course_id, name, color)').eq('student_id', userId).order('joined_at', { ascending: false }) : await supabase.from('enrollments').select('course: courses(id, course_id, name, color)').eq('student_id', userId).order('joined_at', { ascending: false });
 
-  const dateKey = (d: Date) => d.toISOString().slice(0, 10);
-
-  const assignmentsByDate = new Map<string, AssignmentWithCourse[]>();
-  groupedAssignments.forEach((g) => {
-    g.assignments.forEach((a) => {
-      const key = dateKey(new Date(a.due_date));
-      const arr = assignmentsByDate.get(key) ?? [];
-      arr.push(a);
-      assignmentsByDate.set(key, arr);
-    });
-  });
-
-  function dayStatusFor(date: Date) {
-    const key = dateKey(date);
-    const list = assignmentsByDate.get(key) ?? [];
-    if (list.length === 0) return { label: 'No due', color: 'bg-gray-100 text-gray-600' };
-    if (list.some((a) => a.status === 'missing')) return { label: 'Due', color: 'bg-red-50 text-red-700' };
-    if (list.some((a) => a.status === 'submitted')) return { label: 'Submitted', color: 'bg-blue-50 text-blue-700' };
-    if (list.every((a) => a.status === 'graded')) return { label: 'Graded', color: 'bg-green-50 text-green-700' };
-    return { label: 'Due', color: 'bg-yellow-50 text-yellow-700' };
+      // normalize depending on client shape
+      const rows: any[] = (resp?.data || resp) as any[];
+      const courses = (rows || []).map((r) => r.course).filter(Boolean);
+      setJoinedCourses(courses.slice(0, 6)); // keep a reasonable number
+    } catch (err) {
+      console.error('fetchEnrolledCourses error', err);
+    }
   }
 
-  const QuickActionButtons = () => (
-    <>
-      <button onClick={() => navigate('/grades')} className="text-left px-3 py-2 border rounded-md">View grades</button>
-      <button onClick={() => setAssignmentsOpen(true)} className="text-left px-3 py-2 border rounded-md">Assignments</button>
-      <button onClick={() => navigate('/inbox')} className="text-left px-3 py-2 border rounded-md">Inbox</button>
-    </>
-  );
+  // fetch enrolled courses on mount
+  useEffect(() => {
+    fetchEnrolledCourses();
+    // optionally re-fetch when assignments or profile summary changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const recentPosts = useMemo(() => (
+    groupedAssignments
+      .flatMap((g) => g.assignments.map((a) => ({ ...a, groupDate: g.date })))
+      .sort((x, y) => new Date(y.due_date).getTime() - new Date(x.due_date).getTime())
+      .slice(0, 3)
+  ), [groupedAssignments]);
+
+  const next7Days = Array.from({ length: 7 }).map((_, i) => {
+     const d = new Date();
+     d.setDate(d.getDate() + i);
+     return d;
+   });
+
+   const dateKey = (d: Date) => d.toISOString().slice(0, 10);
+  const assignmentsByDate = useMemo(() => {
+     const map = new Map<string, AssignmentWithCourse[]>();
+     groupedAssignments.forEach((g) => {
+       g.assignments.forEach((a) => {
+         const key = dateKey(new Date(a.due_date));
+         const arr = map.get(key) ?? [];
+         arr.push(a);
+         map.set(key, arr);
+       });
+     });
+     return map;
+   }, [groupedAssignments]);
+
+  function dayStatusFor(date: Date) {
+     const key = dateKey(date);
+     const list = assignmentsByDate.get(key) ?? [];
+     if (list.length === 0) return { label: 'No due', color: 'bg-gray-100 text-gray-600' };
+     if (list.some((a) => a.status === 'missing')) return { label: 'Due', color: 'bg-red-50 text-red-700' };
+     if (list.some((a) => a.status === 'submitted')) return { label: 'Submitted', color: 'bg-blue-50 text-blue-700' };
+     if (list.every((a) => a.status === 'graded')) return { label: 'Graded', color: 'bg-green-50 text-green-700' };
+     return { label: 'Due', color: 'bg-yellow-50 text-yellow-700' };
+   }
+
+   const QuickActionButtons = () => (
+     <>
+       <button onClick={() => navigate('/grades')} className="text-left px-3 py-2 border rounded-md">View grades</button>
+       <button onClick={() => setAssignmentsOpen(true)} className="text-left px-3 py-2 border rounded-md">Assignments</button>
+       <button onClick={() => navigate('/inbox')} className="text-left px-3 py-2 border rounded-md">Inbox</button>
+     </>
+   );
 
   const [assignmentsOpen, setAssignmentsOpen] = useState(false);
   const [assignmentsState, setAssignmentsState] = useState<AssignmentWithCourse[]>(() => groupedAssignments.flatMap((g) => g.assignments));

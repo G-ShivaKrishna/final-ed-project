@@ -10,6 +10,7 @@ from datetime import datetime
 import random
 import string
 import time
+from postgrest.exceptions import APIError
 
 
 # --- configure these per your prompt ---
@@ -105,6 +106,35 @@ def _single_from_resp(resp):
     if isinstance(data, list):
         return data[0] if data else None
     return data
+
+
+def _list_from_resp(resp):
+    """
+    Normalize a supabase .execute() response into a Python list.
+    Accepts objects with .data, dicts like {'data': [...]}, plain lists, or single-row dicts.
+    Always returns a list (possibly empty).
+    """
+    if resp is None:
+        return []
+    # object with .data attribute
+    if hasattr(resp, 'data'):
+        d = getattr(resp, 'data', None)
+    elif isinstance(resp, dict):
+        d = resp.get('data', None)
+    else:
+        d = resp
+
+    if d is None:
+        return []
+    if isinstance(d, list):
+        return d
+    if isinstance(d, dict):
+        return [d]
+    # fallback: coerce to list
+    try:
+        return list(d)
+    except Exception:
+        return []
 
 
 @api_view(['GET'])
@@ -233,13 +263,16 @@ def dashboard_summary(request):
 		return Response({"error": "user_id query parameter is required"}, status=400)
 
 	try:
+		logger.info("dashboard_summary requested for user_id=%s", user_id)
 		# 1) get enrollments
 		enroll_resp = supabase.table('enrollments').select('course_id').eq('student_id', user_id).execute()
 		if getattr(enroll_resp, 'error', None):
+			logger.exception("enrollments query error")
 			return Response({"error": str(enroll_resp.error)}, status=500)
 
 		# enrollments.course_id stores the course code (text) per schema
-		course_codes = [r.get('course_id') for r in (enroll_resp.data or []) if r.get('course_id')]
+		enroll_rows = _list_from_resp(enroll_resp)
+		course_codes = [r.get('course_id') for r in enroll_rows if r.get('course_id')]
 		enrolled_count = len(course_codes)
 
 		if not course_codes:
@@ -248,23 +281,34 @@ def dashboard_summary(request):
 		# map course codes -> course UUIDs so we can fetch assignments which reference courses.id
 		courses_resp = supabase.table('courses').select('id, course_id').in_('course_id', course_codes).execute()
 		if getattr(courses_resp, 'error', None):
+			logger.exception("courses lookup error")
 			return Response({"error": str(courses_resp.error)}, status=500)
-		course_ids = [r.get('id') for r in (courses_resp.data or []) if r.get('id')]
+		course_rows = _list_from_resp(courses_resp)
+		course_ids = [r.get('id') for r in course_rows if r.get('id')]
 		if not course_ids:
 			# no matching courses found (shouldn't normally happen), return empty assignments
 			return Response({"enrolled_courses": enrolled_count, "assignments_due": 0, "assignments": []})
 
 		# 2) fetch assignments for these courses
-		assign_resp = supabase.table('assignments') \
-			.select('*, course:courses(*)') \
-			.in_('course_id', course_ids) \
-			.order('due_date', desc=False) \
-			.execute()
-
-		if getattr(assign_resp, 'error', None):
-			return Response({"error": str(assign_resp.error)}, status=500)
-
-		assignments = assign_resp.data or []
+		try:
+			assign_resp = supabase.table('assignments') \
+				.select('*, course:courses(*)') \
+				.in_('course_id', course_ids) \
+				.order('due_date', desc=False) \
+				.execute()
+			if getattr(assign_resp, 'error', None):
+				logger.exception("assignments lookup error")
+				return Response({"error": str(assign_resp.error)}, status=500)
+			assignments = _list_from_resp(assign_resp)
+		except APIError as e:
+			# PostgREST raises APIError when the table isn't found in the schema cache (PGRST205).
+			# Log and return an empty assignments list so the frontend continues to function.
+			logger.warning("Assignments table missing or PostgREST schema cache mismatch: %s", e)
+			assignments = []
+		except Exception as e:
+			# Unexpected errors still surface
+			logger.exception("Unexpected error fetching assignments")
+			return Response({"error": "assignments_lookup_failed", "details": str(e)}, status=500)
 
 		# ensure frontend compatibility: alias course.course_id -> course.code
 		for a in assignments:
@@ -285,7 +329,10 @@ def dashboard_summary(request):
 			"assignments": assignments,
 		})
 	except Exception as e:
-		return Response({"error": str(e)}, status=500)
+		logger.exception("dashboard_summary failed")
+		# return error details for easier debugging; in production hide details
+		return Response({"error": "internal_server_error", "details": str(e)}, status=500)
+
 
 from django.http import JsonResponse
 
