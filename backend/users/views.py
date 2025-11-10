@@ -238,12 +238,21 @@ def dashboard_summary(request):
 		if getattr(enroll_resp, 'error', None):
 			return Response({"error": str(enroll_resp.error)}, status=500)
 
-		course_ids = [r.get('course_id') for r in (enroll_resp.data or []) if r.get('course_id')]
+		# enrollments.course_id stores the course code (text) per schema
+		course_codes = [r.get('course_id') for r in (enroll_resp.data or []) if r.get('course_id')]
+		enrolled_count = len(course_codes)
 
-		enrolled_count = len(course_ids)
-
-		if not course_ids:
+		if not course_codes:
 			return Response({"enrolled_courses": 0, "assignments_due": 0, "assignments": []})
+
+		# map course codes -> course UUIDs so we can fetch assignments which reference courses.id
+		courses_resp = supabase.table('courses').select('id, course_id').in_('course_id', course_codes).execute()
+		if getattr(courses_resp, 'error', None):
+			return Response({"error": str(courses_resp.error)}, status=500)
+		course_ids = [r.get('id') for r in (courses_resp.data or []) if r.get('id')]
+		if not course_ids:
+			# no matching courses found (shouldn't normally happen), return empty assignments
+			return Response({"enrolled_courses": enrolled_count, "assignments_due": 0, "assignments": []})
 
 		# 2) fetch assignments for these courses
 		assign_resp = supabase.table('assignments') \
@@ -358,7 +367,8 @@ def create_join_request(request):
         course_db_id = course.get('id')
 
         # check if student is already enrolled
-        enroll_check = supabase.table('enrollments').select('id').eq('course_id', course_db_id).eq('student_id', student_id).execute()
+        # enrollments.course_id stores the course.code (text), check by code
+        enroll_check = supabase.table('enrollments').select('id').eq('course_id', course_code).eq('student_id', student_id).execute()
         if getattr(enroll_check, 'error', None):
             pass
         else:
@@ -456,9 +466,10 @@ def respond_join_request(request):
             return Response({"error": "request_not_found"}, status=404)
         course_db_id = jr.get('course_db_id')
         student_id = jr.get('student_id')
+        course_code = jr.get('course_code')  # text code stored when student requested join
 
         # verify instructor owns the course
-        course_resp = supabase.table('courses').select('id, instructor_id').eq('id', course_db_id).execute()
+        course_resp = supabase.table('courses').select('id, instructor_id, course_id').eq('id', course_db_id).execute()
         if getattr(course_resp, 'error', None):
             return Response({"error": str(course_resp.error)}, status=500)
         course_row = _single_from_resp(course_resp)
@@ -469,7 +480,8 @@ def respond_join_request(request):
 
         if action == 'accept':
             # create enrollment (avoid duplicates)
-            enroll_check = supabase.table('enrollments').select('id').eq('course_id', course_db_id).eq('student_id', student_id).execute()
+            # enrollments use course_code text; check by course_code stored on request
+            enroll_check = supabase.table('enrollments').select('id').eq('course_id', course_code).eq('student_id', student_id).execute()
             if getattr(enroll_check, 'error', None):
                 pass
             else:
@@ -477,8 +489,9 @@ def respond_join_request(request):
                     supabase.table('join_requests').update({'status': 'accepted'}).eq('id', request_id).execute()
                     return Response({"result": "already_enrolled"}, status=200)
 
+            # insert enrollment using course code (text) per schema
             enroll_payload = {
-                'course_id': course_db_id,
+                'course_id': course_code,
                 'student_id': student_id,
             }
             enroll_resp = supabase.table('enrollments').insert(enroll_payload).execute()
@@ -492,5 +505,78 @@ def respond_join_request(request):
             # reject
             supabase.table('join_requests').update({'status': 'rejected'}).eq('id', request_id).execute()
             return Response({"result": "rejected"}, status=200)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(['GET'])
+def list_enrolled_students(request):
+    """
+    Instructor lists enrolled students for a course.
+
+    Query params: course_db_id (UUID) and instructor_id (UUID) are required.
+    Returns list of enrollments with student info: [{ id, student_id, joined_at, student: { id, username, email } }, ...]
+    """
+    course_db_id = request.GET.get('course_db_id')
+    instructor_id = request.GET.get('instructor_id')
+    if not course_db_id or not instructor_id:
+        return Response({"error": "course_db_id and instructor_id query params are required"}, status=400)
+
+    try:
+        # verify course belongs to instructor
+        course_resp = supabase.table('courses').select('id, instructor_id, course_id').eq('id', course_db_id).execute()
+        if getattr(course_resp, 'error', None):
+            return Response({"error": str(course_resp.error)}, status=500)
+        course_row = _single_from_resp(course_resp)
+        if not course_row:
+            return Response({"error": "course_not_found"}, status=404)
+        if str(course_row.get('instructor_id')) != str(instructor_id):
+            return Response({"error": "forbidden"}, status=403)
+
+        # enrollments.store course_id as the course code (text) per schema; fetch by course_code
+        course_code = course_row.get('course_id')
+        enroll_resp = supabase.table('enrollments') \
+            .select('id, student_id, joined_at, student:users(id, username, email)') \
+            .eq('course_id', course_code) \
+            .order('joined_at', desc=False) \
+            .execute()
+        if getattr(enroll_resp, 'error', None):
+            return Response({"error": str(enroll_resp.error)}, status=500)
+
+        return Response(enroll_resp.data or [])
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(['POST'])
+def delete_course(request):
+    """Delete a course (instructor only).
+
+    Expects JSON body: { course_db_id: <courses.id>, instructor_id: <auth user id> }
+    Returns: { result: "deleted" } on success.
+    """
+    data = request.data
+    course_db_id = data.get('course_db_id')
+    instructor_id = data.get('instructor_id')
+    if not course_db_id or not instructor_id:
+        return Response({"error": "course_db_id and instructor_id are required"}, status=400)
+
+    try:
+        # verify course exists and belongs to instructor
+        course_resp = supabase.table('courses').select('id, instructor_id, course_id').eq('id', course_db_id).execute()
+        if getattr(course_resp, 'error', None):
+            return Response({"error": str(course_resp.error)}, status=500)
+        course_row = _single_from_resp(course_resp)
+        if not course_row:
+            return Response({"error": "course_not_found"}, status=404)
+        if str(course_row.get('instructor_id')) != str(instructor_id):
+            return Response({"error": "forbidden"}, status=403)
+
+        # perform delete (DB cascade will remove related rows if configured)
+        del_resp = supabase.table('courses').delete().eq('id', course_db_id).execute()
+        if getattr(del_resp, 'error', None):
+            return Response({"error": str(del_resp.error)}, status=500)
+
+        return Response({"result": "deleted"}, status=200)
     except Exception as e:
         return Response({"error": str(e)}, status=500)

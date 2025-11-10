@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { useNavigate } from 'react-router-dom';
 
 export default function CreateCourse() {
   const [formData, setFormData] = useState({
@@ -9,6 +10,7 @@ export default function CreateCourse() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [courseCode, setCourseCode] = useState<string | null>(null);
+  const navigate = useNavigate ? (useNavigate() as any) : (undefined as any); // if useNavigate is available; otherwise ignore
 
   const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
 
@@ -61,6 +63,12 @@ export default function CreateCourse() {
 
   return (
     <div className="max-w-2xl mx-auto">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <button onClick={() => navigate && navigate(-1)} className="px-3 py-1 border rounded-md">Back</button>
+          <button onClick={() => navigate && navigate('/instructor')} className="px-3 py-1 border rounded-md">Dashboard</button>
+        </div>
+      </div>
       <div className="bg-white rounded-xl shadow-sm p-6">
         <h2 className="text-xl font-semibold text-slate-800 mb-4">Create new course</h2>
 

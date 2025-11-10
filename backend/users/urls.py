@@ -13,4 +13,6 @@ urlpatterns = [
     path('courses/join-request/', views.create_join_request, name='create_join_request'),
     path('courses/requests/', views.list_join_requests, name='list_join_requests'),
     path('courses/requests/respond/', views.respond_join_request, name='respond_join_request'),
+    path('courses/students/', views.list_enrolled_students, name='list_enrolled_students'),
+    path('courses/delete/', views.delete_course, name='delete_course'),
 ]
