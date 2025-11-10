@@ -9,4 +9,8 @@ urlpatterns = [
     path('dashboard/', views.dashboard_summary, name='dashboard_summary'),
     path('ask/', views.ask, name='users_ask'),
     path('health/', views.health_check, name='health_check'),
+    path('courses/create/', views.create_course, name='create_course'),
+    path('courses/join-request/', views.create_join_request, name='create_join_request'),
+    path('courses/requests/', views.list_join_requests, name='list_join_requests'),
+    path('courses/requests/respond/', views.respond_join_request, name='respond_join_request'),
 ]

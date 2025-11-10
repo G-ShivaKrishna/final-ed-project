@@ -216,6 +216,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
   const [joinModalOpen, setJoinModalOpen] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [joinStatus, setJoinStatus] = useState<string | null>(null);
+  const [joinLoading, setJoinLoading] = useState(false);
   const joinInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -334,6 +335,45 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
       setUploading(false);
       setPendingUploadFor(null);
     }, 700);
+  }
+
+  // inside join modal handler, replace the simulated flow with real POST
+  async function submitJoinRequest(code: string) {
+    setJoinLoading(true);
+    setJoinStatus(null);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const studentId = sessionData?.session?.user?.id;
+      if (!studentId) throw new Error('Not authenticated');
+
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+      const res = await fetch(`${API_BASE}/users/courses/join-request/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          student_id: studentId,
+          course_code: code,
+        }),
+      });
+
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // Map known backend errors to friendly messages
+        const errCode = (body && (body.error || '')).toString();
+        let friendly = body?.error || body?.details || `Request failed: ${res.status}`;
+        if (errCode.includes('course_not_found')) friendly = 'Course not found. Please check the code.';
+        if (errCode.includes('already_enrolled')) friendly = 'You are already enrolled in this course.';
+        if (errCode.includes('request_already_pending')) friendly = 'You already have a pending request for this course.';
+        setJoinStatus(`error: ${friendly}`);
+      } else {
+        // success - server created a join request
+        setJoinStatus('pending');
+      }
+    } catch (err: any) {
+      setJoinStatus(`error: ${err.message || String(err)}`);
+    } finally {
+      setJoinLoading(false);
+    }
   }
 
   return (
@@ -593,30 +633,37 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
             <div className="absolute inset-0 bg-black/40" onClick={() => setJoinModalOpen(false)} />
             <div className="relative bg-white rounded-lg shadow-lg w-full max-w-md p-6 z-50">
               {!joinStatus ? (
-                <form onSubmit={(e) => { e.preventDefault(); setJoinStatus('the instructor will accept the joining'); }}>
-                  <h3 className="text-lg font-semibold text-slate-800 mb-2">Join course</h3>
-                  <p className="text-sm text-slate-500 mb-4">Enter the course code provided by your instructor.</p>
-                  <input ref={joinInputRef} value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="Enter code" className="w-full border rounded px-3 py-2 mb-4" />
-                  <div className="flex items-center justify-end gap-2">
-                    <button type="button" onClick={() => setJoinModalOpen(false)} className="px-3 py-2 rounded-md border">Cancel</button>
-                    <button type="submit" disabled={!joinCode.trim()} className="px-3 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-60">Request join</button>
-                  </div>
-                </form>
-              ) : (
-                <div>
-                  <h3 className="text-lg font-semibold text-slate-800 mb-2">Request sent</h3>
-                  <p className="text-sm text-slate-500 mb-4">the instructor will accept the joining</p>
-                  <div className="flex justify-end">
-                    <button onClick={() => setJoinModalOpen(false)} className="px-3 py-2 rounded-md bg-indigo-600 text-white">Close</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-        {/* hidden file input for assignment submission (PDF only) - always present so clicks work from any modal */}
-        <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden" onChange={handleFileChange} />
-      </div>
-    </div>
-  );
-}
+                <form onSubmit={(e) => { e.preventDefault(); submitJoinRequest(joinCode); }}>
+                   <h3 className="text-lg font-semibold text-slate-800 mb-2">Join course</h3>
+                   <p className="text-sm text-slate-500 mb-4">Enter the course code provided by your instructor.</p>
+                   <input ref={joinInputRef} value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="Enter code" className="w-full border rounded px-3 py-2 mb-4" />
+                   <div className="flex items-center justify-end gap-2">
+                     <button type="button" onClick={() => setJoinModalOpen(false)} className="px-3 py-2 rounded-md border">Cancel</button>
+-                    <button type="submit" disabled={!joinCode.trim()} className="px-3 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-60">Request join</button>
++                    <button type="submit" disabled={!joinCode.trim() || joinLoading} className="px-3 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-60">
++                      {joinLoading ? 'Sending…' : 'Request join'}
++                    </button>
+                   </div>
+                 </form>
+               ) : (
+                 <div>
+                   <h3 className="text-lg font-semibold text-slate-800 mb-2">Request sent</h3>
+-                  <p className="text-sm text-slate-500 mb-4">{joinStatus === 'pending' ? 'Waiting for instructor approval.' : joinStatus}</p>
++                  <p className="text-sm text-slate-500 mb-4">
++                    {joinStatus === 'pending' ? 'Waiting for instructor approval.' : joinStatus}
++                  </p>
+                   <div className="flex justify-end">
+                     <button onClick={() => setJoinModalOpen(false)} className="px-3 py-2 rounded-md bg-indigo-600 text-white">Close</button>
+                   </div>
+                 </div>
+               )}
+             </div>
+           </div>
+         )}
+-        {/* hidden file input for assignment submission (PDF only) - always present so clicks work from any modal */}
++        {/* hidden file input for assignment submission (PDF only) - always present so clicks work from any modal */}
+         <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden" onChange={handleFileChange} />
+       </div>
+     </div>
+   );
+ }
