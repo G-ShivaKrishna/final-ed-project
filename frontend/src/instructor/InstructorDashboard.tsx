@@ -6,6 +6,32 @@ import ChatBox from '../student/ChatBot';
 import CreateCourse from './CreateCourse';
 import CoursesList from './CoursesList';
 
+type AssignmentWithCourse = {
+  id: string | number;
+  title?: string;
+  due_date: string;
+  status: string;
+  completed_items?: number;
+  points?: number;
+  course?: {
+    id: string | number;
+    code?: string;
+    color?: string;
+  };
+  submitted_file?: string;
+};
+
+type GroupedAssignment = {
+  date: string;
+  assignments: AssignmentWithCourse[];
+};
+
+function formatDate(iso?: string) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 export default function InstructorDashboard({ onLogout }: { onLogout: () => void }) {
   const navigate = useNavigate();
 

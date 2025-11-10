@@ -15,4 +15,12 @@ urlpatterns = [
     path('courses/requests/respond/', views.respond_join_request, name='respond_join_request'),
     path('courses/students/', views.list_enrolled_students, name='list_enrolled_students'),
     path('courses/delete/', views.delete_course, name='delete_course'),
+    # assignments & submissions
+    path('courses/assignments/create/', views.create_assignment, name='create_assignment'),
+    path('courses/assignments/', views.list_course_assignments, name='list_course_assignments'),
+    path('courses/assignments/submit/', views.submit_assignment, name='submit_assignment'),
+    path('courses/submissions/grade/', views.grade_submission, name='grade_submission'),
+    # course resources (syllabus / videos)
+    path('courses/resources/add/', views.add_course_resource, name='add_course_resource'),
+    path('courses/resources/', views.list_course_resources, name='list_course_resources'),
 ]

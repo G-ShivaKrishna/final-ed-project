@@ -230,6 +230,13 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
 
   // Joined courses (fetched from enrollments -> courses)
   const [joinedCourses, setJoinedCourses] = useState<{ id: string | number; code?: string; color?: string }[]>([]);
+  // per-course modal + details for students
+  const [courseModalOpen, setCourseModalOpen] = useState(false);
+  const [activeCourseId, setActiveCourseId] = useState<string | number | null>(null);
+  const [activeCourseName, setActiveCourseName] = useState<string | null>(null);
+  const [courseResources, setCourseResources] = useState<any[]>([]);
+  const [courseAssignments, setCourseAssignments] = useState<any[]>([]);
+  const [courseLoading, setCourseLoading] = useState(false);
 
   async function fetchEnrolledCourses() {
     try {
@@ -251,6 +258,45 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
       setJoinedCourses(courses.slice(0, 6)); // keep a reasonable number
     } catch (err) {
       console.error('fetchEnrolledCourses error', err);
+    }
+  }
+
+  // load course details (resources + assignments) for a joined course (student view)
+  async function loadCourseDetails(course: { id: string | number; code?: string; name?: string }) {
+    setCourseLoading(true);
+    setCourseResources([]);
+    setCourseAssignments([]);
+    setActiveCourseId(course.id);
+    setActiveCourseName(course.name ?? course.code ?? '');
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id;
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+
+      // fetch resources
+      try {
+        const rres = await fetch(`${API_BASE}/users/courses/resources/?course_db_id=${encodeURIComponent(String(course.id))}&user_id=${encodeURIComponent(String(userId))}`);
+        const rjson = await rres.json().catch(() => []);
+        if (rres.ok) setCourseResources(rjson || []);
+        else setCourseResources([]);
+      } catch (e) {
+        setCourseResources([]);
+      }
+
+      // fetch assignments for this course (student view)
+      try {
+        const ares = await fetch(`${API_BASE}/users/courses/assignments/?course_db_id=${encodeURIComponent(String(course.id))}&user_id=${encodeURIComponent(String(userId))}`);
+        const ajson = await ares.json().catch(() => []);
+        if (ares.ok) setCourseAssignments(ajson || []);
+        else setCourseAssignments([]);
+      } catch (e) {
+        setCourseAssignments([]);
+      }
+      setCourseModalOpen(true);
+    } catch (err) {
+      console.error('loadCourseDetails error', err);
+    } finally {
+      setCourseLoading(false);
     }
   }
 
@@ -326,7 +372,8 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
     setTimeout(() => fileInputRef.current?.click(), 50);
   }
 
-  function handleFileChange(e: any) {
+  // handle file change: upload/submit assignment to backend (student)
+  async function handleFileChange(e: any) {
     const file = e.target.files?.[0];
     const id = pendingUploadFor;
     // clear the input so same-file re-uploads are possible later
@@ -343,14 +390,50 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
       return;
     }
 
-    // simulate upload
+    // try to submit to backend
     setUploading(true);
     setUploadError(null);
-    setTimeout(() => {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const studentId = sessionData?.session?.user?.id;
+      if (!studentId) throw new Error('Not authenticated');
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+
+      // NOTE: we don't handle file storage here. send a placeholder file_url = filename.
+      const body = {
+        student_id: studentId,
+        assignment_id: id,
+        file_url: file.name,
+      };
+      const res = await fetch(`${API_BASE}/users/courses/assignments/submit/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // fallback to local marking but show error
+        setUploadError(j?.error || `Submit failed: ${res.status}`);
+        // still mark locally so UI reflects the attempt
+        markAsSubmitted(id, file.name);
+      } else {
+        // success: update UI and refresh course assignments
+        markAsSubmitted(id, file.name);
+        // reload course details so students see updated submission state
+        if (activeCourseId) {
+          await loadCourseDetails({ id: activeCourseId, name: activeCourseName ?? undefined });
+        } else {
+          await fetchEnrolledCourses();
+        }
+      }
+    } catch (err: any) {
+      setUploadError(err?.message || String(err));
+      // still mark locally
       markAsSubmitted(id, file.name);
+    } finally {
       setUploading(false);
       setPendingUploadFor(null);
-    }, 700);
+    }
   }
 
   // inside join modal handler, replace the simulated flow with real POST
@@ -547,7 +630,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
                 <div className="mt-2 flex flex-wrap gap-2">
                   {joinedCourses.length ? (
                     joinedCourses.map((c) => (
-                      <button key={c.id} onClick={() => navigate(`/courses/${c.id}`)} className={`px-3 py-1 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 ${c.color === 'purple' ? 'bg-violet-100 text-violet-700' : c.color === 'blue' ? 'bg-blue-100 text-blue-700' : c.color === 'gray' ? 'bg-gray-100 text-gray-700' : 'bg-slate-100 text-slate-700'}`}>
+                      <button key={c.id} onClick={() => loadCourseDetails({ id: c.id, code: c.code, name: (c as any).name })} className={`px-3 py-1 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 ${c.color === 'purple' ? 'bg-violet-100 text-violet-700' : c.color === 'blue' ? 'bg-blue-100 text-blue-700' : c.color === 'gray' ? 'bg-gray-100 text-gray-700' : 'bg-slate-100 text-slate-700'}`}>
                         {c.code}
                       </button>
                     ))
@@ -676,10 +759,76 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
              </div>
            </div>
          )}
--        {/* hidden file input for assignment submission (PDF only) - always present so clicks work from any modal */}
-+        {/* hidden file input for assignment submission (PDF only) - always present so clicks work from any modal */}
-         <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden" onChange={handleFileChange} />
-       </div>
-     </div>
-   );
- }
+         {/* Course Details Modal (student view) */}
+         {courseModalOpen && (
+           <div className="fixed inset-0 z-60 flex items-center justify-center">
+             <div className="absolute inset-0 bg-black/40" onClick={() => setCourseModalOpen(false)} />
+             <div className="relative bg-white rounded-lg shadow-lg w-full max-w-3xl p-6 z-50">
+               <div className="flex items-center justify-between mb-4">
+                 <h3 className="text-lg font-semibold">{activeCourseName ?? 'Course'}</h3>
+                 <div>
+                  <button onClick={() => setCourseModalOpen(false)} className="px-3 py-1 text-sm rounded-md border">Close</button>
+                </div>
+               </div>
+
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Resources</h4>
+                  {courseLoading ? (
+                    <div className="text-sm text-slate-500">Loading…</div>
+                  ) : courseResources.length === 0 ? (
+                    <div className="text-sm text-slate-500">No resources</div>
+                  ) : (
+                    <ul className="space-y-2">
+                      {courseResources.map((r: any) => (
+                        <li key={r.id} className="p-3 border rounded">
+                          <div className="text-sm font-semibold">{r.title || (r.type === 'video' ? 'Video' : 'Syllabus')}</div>
+                          {r.type === 'video' ? (
+                            <a href={r.video_url} target="_blank" rel="noreferrer" className="text-xs text-indigo-600 hover:underline">{r.video_url}</a>
+                          ) : (
+                            <div className="text-xs text-slate-600 mt-1 whitespace-pre-wrap">{r.content}</div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Assignments</h4>
+                  {courseLoading ? (
+                    <div className="text-sm text-slate-500">Loading…</div>
+                  ) : courseAssignments.length === 0 ? (
+                    <div className="text-sm text-slate-500">No assignments</div>
+                  ) : (
+                    <ul className="space-y-2">
+                      {courseAssignments.map((a: any) => (
+                        <li key={a.id} className="p-3 border rounded flex items-center justify-between">
+                          <div>
+                            <div className="text-sm font-medium">{a.title}</div>
+                            <div className="text-xs text-slate-500">{a.due_date ? new Date(a.due_date).toLocaleString() : 'No due date'}</div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {a.status === 'submitted' ? (
+                              <span className="text-sm text-slate-600">Submitted</span>
+                            ) : (
+                              <button onClick={() => handleInitiateUpload(a.id)} className="px-3 py-1 bg-indigo-600 text-white rounded text-sm">Submit</button>
+                            )}
+                            <button onClick={() => navigate(`/courses/${a.course_db_id ?? a.course?.id ?? ''}`)} className="px-3 py-1 border rounded text-sm">Go</button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* hidden file input for assignment submission (PDF only) */}
+        <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden" onChange={handleFileChange} />
+      </div>
+    </div>
+  );
+}

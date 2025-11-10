@@ -627,3 +627,273 @@ def delete_course(request):
         return Response({"result": "deleted"}, status=200)
     except Exception as e:
         return Response({"error": str(e)}, status=500)
+
+
+# --- Assignments & submissions & resources endpoints ---
+
+@api_view(['POST'])
+def create_assignment(request):
+    """
+    Instructor creates an assignment for a course.
+    Body JSON: { instructor_id, course_db_id, title, description?, due_date?, points? }
+    Returns created assignment row.
+    """
+    data = request.data
+    instructor_id = data.get('instructor_id')
+    course_db_id = data.get('course_db_id')
+    title = data.get('title')
+    if not instructor_id or not course_db_id or not title:
+        return Response({"error": "instructor_id, course_db_id and title are required"}, status=400)
+
+    try:
+        # verify instructor owns the course
+        course_resp = supabase.table('courses').select('id, instructor_id').eq('id', course_db_id).execute()
+        if getattr(course_resp, 'error', None):
+            return Response({"error": str(course_resp.error)}, status=500)
+        course_row = _single_from_resp(course_resp)
+        if not course_row:
+            return Response({"error": "course_not_found"}, status=404)
+        if str(course_row.get('instructor_id')) != str(instructor_id):
+            return Response({"error": "forbidden"}, status=403)
+
+        payload = {
+            'course_db_id': course_db_id,
+            'title': title,
+            'description': data.get('description'),
+            'due_date': data.get('due_date'),
+            'points': data.get('points'),
+            'created_by': instructor_id,
+            'created_at': datetime.now().isoformat(),
+        }
+        resp = supabase.table('assignments').insert(payload).execute()
+        if getattr(resp, 'error', None):
+            return Response({"error": str(resp.error)}, status=500)
+        inserted = resp.data[0] if isinstance(resp.data, list) and resp.data else resp.data
+        return Response(inserted, status=201)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(['GET'])
+def list_course_assignments(request):
+    """
+    List assignments for a course.
+    Query params: course_db_id, user_id (viewer). Viewer must be instructor or enrolled student.
+    """
+    course_db_id = request.GET.get('course_db_id')
+    user_id = request.GET.get('user_id')
+    if not course_db_id or not user_id:
+        return Response({"error": "course_db_id and user_id are required"}, status=400)
+
+    try:
+        # verify course exists
+        course_resp = supabase.table('courses').select('id, instructor_id, course_id').eq('id', course_db_id).execute()
+        if getattr(course_resp, 'error', None):
+            return Response({"error": str(course_resp.error)}, status=500)
+        course_row = _single_from_resp(course_resp)
+        if not course_row:
+            return Response({"error": "course_not_found"}, status=404)
+
+        # check enrolment or instructor
+        if str(course_row.get('instructor_id')) != str(user_id):
+            enroll_resp = supabase.table('enrollments').select('id').eq('course_id', course_row.get('course_id')).eq('student_id', user_id).execute()
+            if getattr(enroll_resp, 'error', None):
+                # if error checking enrollment, still attempt to return public assignments
+                pass
+            else:
+                if not _single_from_resp(enroll_resp):
+                    return Response({"error": "forbidden"}, status=403)
+
+        assign_resp = supabase.table('assignments').select('*').eq('course_db_id', course_db_id).order('due_date', desc=False).execute()
+        if getattr(assign_resp, 'error', None):
+            return Response({"error": str(assign_resp.error)}, status=500)
+        rows = _list_from_resp(assign_resp)
+        return Response(rows)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(['POST'])
+def submit_assignment(request):
+    """
+    Student submits an assignment.
+    Body JSON: { student_id, assignment_id, file_url?, text_submission? }
+    """
+    data = request.data
+    student_id = data.get('student_id')
+    assignment_id = data.get('assignment_id')
+    if not student_id or not assignment_id:
+        return Response({"error": "student_id and assignment_id are required"}, status=400)
+
+    try:
+        # verify assignment exists and get course
+        ass_resp = supabase.table('assignments').select('id, course_db_id').eq('id', assignment_id).execute()
+        if getattr(ass_resp, 'error', None):
+            return Response({"error": str(ass_resp.error)}, status=500)
+        assignment = _single_from_resp(ass_resp)
+        if not assignment:
+            return Response({"error": "assignment_not_found"}, status=404)
+        course_db_id = assignment.get('course_db_id')
+
+        # verify student is enrolled in that course (map course_db_id -> course.course_id if needed)
+        course_resp = supabase.table('courses').select('id, course_id').eq('id', course_db_id).execute()
+        if getattr(course_resp, 'error', None):
+            return Response({"error": str(course_resp.error)}, status=500)
+        course = _single_from_resp(course_resp)
+        if not course:
+            return Response({"error": "course_not_found"}, status=404)
+
+        enroll_check = supabase.table('enrollments').select('id').eq('course_id', course.get('course_id')).eq('student_id', student_id).execute()
+        if getattr(enroll_check, 'error', None):
+            # if enrollment check failed, still return error to be safe
+            return Response({"error": str(enroll_check.error)}, status=500)
+        if not _single_from_resp(enroll_check):
+            return Response({"error": "not_enrolled"}, status=403)
+
+        payload = {
+            'assignment_id': assignment_id,
+            'student_id': student_id,
+            'file_url': data.get('file_url'),
+            'text_submission': data.get('text_submission'),
+            'status': 'submitted',
+            'submitted_at': datetime.now().isoformat(),
+        }
+        ins = supabase.table('submissions').insert(payload).execute()
+        if getattr(ins, 'error', None):
+            return Response({"error": str(ins.error)}, status=500)
+        inserted = ins.data[0] if isinstance(ins.data, list) and ins.data else ins.data
+        return Response(inserted, status=201)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(['POST'])
+def grade_submission(request):
+    """
+    Instructor grades a submission.
+    Body JSON: { grader_id, submission_id, grade, feedback? }
+    """
+    data = request.data
+    grader_id = data.get('grader_id')
+    submission_id = data.get('submission_id')
+    grade = data.get('grade')
+    if not grader_id or not submission_id or grade is None:
+        return Response({"error": "grader_id, submission_id and grade are required"}, status=400)
+
+    try:
+        # fetch submission and the assignment/course
+        sub_resp = supabase.table('submissions').select('id, assignment_id, student_id').eq('id', submission_id).execute()
+        if getattr(sub_resp, 'error', None):
+            return Response({"error": str(sub_resp.error)}, status=500)
+        sub = _single_from_resp(sub_resp)
+        if not sub:
+            return Response({"error": "submission_not_found"}, status=404)
+
+        ass_resp = supabase.table('assignments').select('id, course_db_id, created_by').eq('id', sub.get('assignment_id')).execute()
+        if getattr(ass_resp, 'error', None):
+            return Response({"error": str(ass_resp.error)}, status=500)
+        assignment = _single_from_resp(ass_resp)
+        if not assignment:
+            return Response({"error": "assignment_not_found"}, status=404)
+
+        # verify grader is instructor of the course
+        course_resp = supabase.table('courses').select('id, instructor_id').eq('id', assignment.get('course_db_id')).execute()
+        if getattr(course_resp, 'error', None):
+            return Response({"error": str(course_resp.error)}, status=500)
+        course = _single_from_resp(course_resp)
+        if not course:
+            return Response({"error": "course_not_found"}, status=404)
+        if str(course.get('instructor_id')) != str(grader_id):
+            return Response({"error": "forbidden"}, status=403)
+
+        upd = {
+            'grade': grade,
+            'feedback': data.get('feedback'),
+            'grader_id': grader_id,
+            'graded_at': datetime.now().isoformat(),
+            'status': 'graded',
+        }
+        upd_resp = supabase.table('submissions').update(upd).eq('id', submission_id).execute()
+        if getattr(upd_resp, 'error', None):
+            return Response({"error": str(upd_resp.error)}, status=500)
+        return Response({'result': 'graded'}, status=200)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(['POST'])
+def add_course_resource(request):
+    """
+    Instructor adds a syllabus entry or video link to a course.
+    Body: { instructor_id, course_db_id, type: 'syllabus'|'video', title?, content?, video_url? }
+    """
+    data = request.data
+    instructor_id = data.get('instructor_id')
+    course_db_id = data.get('course_db_id')
+    rtype = data.get('type')
+    if not instructor_id or not course_db_id or rtype not in ('syllabus', 'video'):
+        return Response({"error": "instructor_id, course_db_id and valid type are required"}, status=400)
+
+    try:
+        # verify course belongs to instructor
+        course_resp = supabase.table('courses').select('id, instructor_id').eq('id', course_db_id).execute()
+        if getattr(course_resp, 'error', None):
+            return Response({"error": str(course_resp.error)}, status=500)
+        course_row = _single_from_resp(course_resp)
+        if not course_row:
+            return Response({"error": "course_not_found"}, status=404)
+        if str(course_row.get('instructor_id')) != str(instructor_id):
+            return Response({"error": "forbidden"}, status=403)
+
+        payload = {
+            'course_db_id': course_db_id,
+            'type': rtype,
+            'title': data.get('title'),
+            'content': data.get('content'),
+            'video_url': data.get('video_url'),
+            'created_by': instructor_id,
+            'created_at': datetime.now().isoformat(),
+        }
+        ins = supabase.table('course_resources').insert(payload).execute()
+        if getattr(ins, 'error', None):
+            return Response({"error": str(ins.error)}, status=500)
+        inserted = ins.data[0] if isinstance(ins.data, list) and ins.data else ins.data
+        return Response(inserted, status=201)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(['GET'])
+def list_course_resources(request):
+    """
+    List syllabus entries and videos for a course. Query params: course_db_id, user_id
+    """
+    course_db_id = request.GET.get('course_db_id')
+    user_id = request.GET.get('user_id')
+    if not course_db_id or not user_id:
+        return Response({"error": "course_db_id and user_id required"}, status=400)
+
+    try:
+        # verify access: instructor or enrolled student
+        course_resp = supabase.table('courses').select('id, instructor_id, course_id').eq('id', course_db_id).execute()
+        if getattr(course_resp, 'error', None):
+            return Response({"error": str(course_resp.error)}, status=500)
+        course_row = _single_from_resp(course_resp)
+        if not course_row:
+            return Response({"error": "course_not_found"}, status=404)
+
+        if str(course_row.get('instructor_id')) != str(user_id):
+            enroll_check = supabase.table('enrollments').select('id').eq('course_id', course_row.get('course_id')).eq('student_id', user_id).execute()
+            if getattr(enroll_check, 'error', None):
+                pass
+            else:
+                if not _single_from_resp(enroll_check):
+                    return Response({"error": "forbidden"}, status=403)
+
+        res = supabase.table('course_resources').select('*').eq('course_db_id', course_db_id).order('created_at', desc=False).execute()
+        if getattr(res, 'error', None):
+            return Response({"error": str(res.error)}, status=500)
+        rows = _list_from_resp(res)
+        return Response(rows)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)

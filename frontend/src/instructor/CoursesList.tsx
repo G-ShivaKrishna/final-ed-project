@@ -26,6 +26,13 @@ export default function CoursesList(): JSX.Element {
   const [students, setStudents] = useState<{ id: string; username?: string; email?: string; joined_at?: string }[] | null>(null);
   const [instructorEmail, setInstructorEmail] = useState<string | null>(null);
   const [reqLoading, setReqLoading] = useState(false);
+  const [assignments, setAssignments] = useState<any[] | null>(null);
+  const [resources, setResources] = useState<any[] | null>(null);
+  const [addAssignOpen, setAddAssignOpen] = useState(false);
+  const [addResOpen, setAddResOpen] = useState(false);
+  const [assignForm, setAssignForm] = useState({ title: '', description: '', due_date: '', points: '' });
+  const [resForm, setResForm] = useState({ type: 'syllabus' as 'syllabus' | 'video', title: '', content: '', video_url: '' });
+
   const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
   const navigate = useNavigate();
 
@@ -57,9 +64,8 @@ export default function CoursesList(): JSX.Element {
   }
 
   useEffect(() => {
-    let mounted = true;
     fetchCourses();
-    return () => { mounted = false; };
+    // no teardown needed here
   }, []);
 
   // delete course (instructor)
@@ -96,6 +102,8 @@ export default function CoursesList(): JSX.Element {
     setSelectedCourse(course);
     setRequests(null);
     setStudents(null);
+    setAssignments(null);
+    setResources(null);
     setReqLoading(true);
     setError(null);
     try {
@@ -131,12 +139,93 @@ export default function CoursesList(): JSX.Element {
       } catch (_err) {
         setStudents([]);
       }
+
+      // fetch assignments for this course (instructor view)
+      try {
+        const ares = await fetch(`${API_BASE}/users/courses/assignments/?course_db_id=${encodeURIComponent(course.id)}&user_id=${encodeURIComponent(instructorId)}`);
+        const ajson = await ares.json().catch(() => []);
+        if (ares.ok) setAssignments(ajson || []);
+        else setAssignments([]);
+      } catch {
+        setAssignments([]);
+      }
+
+      // fetch course resources (syllabus/videos)
+      try {
+        const rres = await fetch(`${API_BASE}/users/courses/resources/?course_db_id=${encodeURIComponent(course.id)}&user_id=${encodeURIComponent(instructorId)}`);
+        const rjson = await rres.json().catch(() => []);
+        if (rres.ok) setResources(rjson || []);
+        else setResources([]);
+      } catch {
+        setResources([]);
+      }
     } catch (err: any) {
       setRequests([]);
       setStudents([]);
       setError(err?.message || String(err));
     } finally {
       setReqLoading(false);
+    }
+  }
+
+  async function createAssignment() {
+    if (!selectedCourse) return;
+    setError(null);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const instructorId = sessionData?.session?.user?.id;
+      if (!instructorId) throw new Error('Not authenticated');
+
+      // convert datetime-local (local) -> ISO before sending
+      const dueIso = assignForm.due_date ? new Date(assignForm.due_date).toISOString() : null;
+      const payload = {
+        instructor_id: instructorId,
+        course_db_id: selectedCourse.id,
+        title: assignForm.title,
+        description: assignForm.description,
+        due_date: dueIso,
+        points: assignForm.points ? Number(assignForm.points) : null,
+      };
+      const res = await fetch(`${API_BASE}/users/courses/assignments/create/`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Failed: ${res.status}`);
+      // refresh assignments
+      await openCourseModal(selectedCourse);
+      setAddAssignOpen(false);
+      setAssignForm({ title: '', description: '', due_date: '', points: '' });
+    } catch (err: any) {
+      setError(err?.message || String(err));
+    }
+  }
+
+  async function addResource() {
+    if (!selectedCourse) return;
+    setError(null);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const instructorId = sessionData?.session?.user?.id;
+      if (!instructorId) throw new Error('Not authenticated');
+      const payload = {
+        instructor_id: instructorId,
+        course_db_id: selectedCourse.id,
+        type: resForm.type,
+        title: resForm.title,
+        content: resForm.content,
+        video_url: resForm.video_url,
+      };
+      const res = await fetch(`${API_BASE}/users/courses/resources/add/`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Failed: ${res.status}`);
+      // refresh resources
+      await openCourseModal(selectedCourse);
+      setAddResOpen(false);
+      setResForm({ type: 'syllabus', title: '', content: '', video_url: '' });
+    } catch (err: any) {
+      setError(err?.message || String(err));
     }
   }
 
@@ -203,8 +292,8 @@ export default function CoursesList(): JSX.Element {
       </ul>
 
       {selectedCourse && (
-        // Full-page course management view
-        <div className="fixed inset-0 z-50 bg-slate-50 overflow-auto">
+        // Full-page course management view (lower z so modals can appear above)
+        <div className="fixed inset-0 z-40 bg-slate-50 overflow-auto">
           <div className="max-w-7xl mx-auto p-6">
             <div className="flex items-center justify-between mb-6">
               <div>
@@ -218,7 +307,57 @@ export default function CoursesList(): JSX.Element {
                 <button onClick={() => { setSelectedCourse(null); setRequests(null); setStudents(null); }} className="px-3 py-2 border rounded-md">Close</button>
                 <button onClick={() => { /* optional: navigate to full course editor route later */ }} className="px-3 py-2 bg-indigo-600 text-white rounded-md">Open editor</button>
                 <button onClick={() => deleteCourse(selectedCourse)} className="px-3 py-2 bg-red-600 text-white rounded-md">Delete course</button>
+                {/* new quick-create buttons */}
+                <button onClick={() => setAddAssignOpen(true)} className="px-3 py-2 bg-green-600 text-white rounded-md">Add assignment</button>
+                <button onClick={() => { setResForm({ type: 'syllabus', title: '', content: '', video_url: '' }); setAddResOpen(true); }} className="px-3 py-2 bg-orange-600 text-white rounded-md">Add syllabus</button>
+                <button onClick={() => { setResForm({ type: 'video', title: '', content: '', video_url: '' }); setAddResOpen(true); }} className="px-3 py-2 bg-amber-600 text-white rounded-md">Add resource</button>
               </div>
+            </div>
+
+            {/* Assignments list */}
+            <div className="mb-4 bg-white rounded-lg p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-medium">Assignments</h4>
+                <div className="text-xs text-slate-500">{assignments ? `${assignments.length} total` : '—'}</div>
+              </div>
+              {assignments && assignments.length > 0 ? (
+                <ul className="space-y-2">
+                  {assignments.map((a: any) => (
+                    <li key={a.id} className="border rounded p-3 flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-medium">{a.title}</div>
+                        <div className="text-xs text-slate-500">{a.due_date ? new Date(a.due_date).toLocaleString() : 'No due date'}</div>
+                      </div>
+                      <div className="text-xs text-slate-400">{a.points ? `${a.points} pts` : ''}</div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-sm text-slate-500">No assignments yet.</div>
+              )}
+            </div>
+
+            {/* Resources list */}
+            <div className="mb-6 bg-white rounded-lg p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-medium">Resources (syllabus & videos)</h4>
+                <div className="text-xs text-slate-500">{resources ? `${resources.length} total` : '—'}</div>
+              </div>
+              {resources && resources.length > 0 ? (
+                <ul className="space-y-2">
+                  {resources.map((r: any) => (
+                    <li key={r.id} className="border rounded p-3 flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-medium">{r.title || (r.type === 'video' ? 'Video' : 'Syllabus')}</div>
+                        <div className="text-xs text-slate-500">{r.type}{r.video_url ? ` • ${r.video_url}` : ''}</div>
+                      </div>
+                      <div className="text-xs text-slate-400">{r.created_at ? new Date(r.created_at).toLocaleDateString() : ''}</div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-sm text-slate-500">No resources yet.</div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -272,6 +411,59 @@ export default function CoursesList(): JSX.Element {
                   </div>
                 </div>
               </aside>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Assignment Modal */}
+      {addAssignOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40 z-40" onClick={() => setAddAssignOpen(false)} />
+          <div className="relative bg-white rounded-lg shadow-lg w-full max-w-md p-6 z-50">
+            <h3 className="text-lg font-semibold mb-3">Add assignment</h3>
+            <div className="space-y-2">
+              <input value={assignForm.title} onChange={(e) => setAssignForm((s) => ({ ...s, title: e.target.value }))} placeholder="Title" className="w-full border px-2 py-1 rounded" />
+              {/* datetime-local shows a calendar/time picker in supported browsers */}
+              <input
+                type="datetime-local"
+                value={assignForm.due_date}
+                onChange={(e) => setAssignForm((s) => ({ ...s, due_date: e.target.value }))}
+                className="w-full border px-2 py-1 rounded"
+                aria-label="Due date and time"
+              />
+              <input value={assignForm.points} onChange={(e) => setAssignForm((s) => ({ ...s, points: e.target.value }))} placeholder="Points" className="w-full border px-2 py-1 rounded" />
+              <textarea value={assignForm.description} onChange={(e) => setAssignForm((s) => ({ ...s, description: e.target.value }))} placeholder="Description" className="w-full border px-2 py-2 rounded h-24" />
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setAddAssignOpen(false)} className="px-3 py-1 border rounded">Cancel</button>
+              <button onClick={createAssignment} className="px-3 py-1 bg-indigo-600 text-white rounded">Create</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Resource Modal */}
+      {addResOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40 z-40" onClick={() => setAddResOpen(false)} />
+          <div className="relative bg-white rounded-lg shadow-lg w-full max-w-md p-6 z-50">
+            <h3 className="text-lg font-semibold mb-3">Add resource</h3>
+            <div className="space-y-2">
+              <select value={resForm.type} onChange={(e) => setResForm((s) => ({ ...s, type: e.target.value as any }))} className="w-full border px-2 py-1 rounded">
+                <option value="syllabus">Syllabus / Notes</option>
+                <option value="video">YouTube video</option>
+              </select>
+              <input value={resForm.title} onChange={(e) => setResForm((s) => ({ ...s, title: e.target.value }))} placeholder="Title" className="w-full border px-2 py-1 rounded" />
+              {resForm.type === 'syllabus' ? (
+                <textarea value={resForm.content} onChange={(e) => setResForm((s) => ({ ...s, content: e.target.value }))} placeholder="Syllabus text" className="w-full border px-2 py-2 rounded h-28" />
+              ) : (
+                <input value={resForm.video_url} onChange={(e) => setResForm((s) => ({ ...s, video_url: e.target.value }))} placeholder="YouTube URL" className="w-full border px-2 py-1 rounded" />
+              )}
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setAddResOpen(false)} className="px-3 py-1 border rounded">Cancel</button>
+              <button onClick={addResource} className="px-3 py-1 bg-indigo-600 text-white rounded">Add</button>
             </div>
           </div>
         </div>
