@@ -1108,8 +1108,11 @@ def list_course_submissions(request):
 
         # fetch submissions for these assignments and include student info
         try:
+            # Explicitly choose the relationships because `users` is referenced
+            # by both submissions.student_id and submissions.grader_id.
+            # Use PostgREST relationship alias syntax: users!<fk_name>
             subs_resp = supabase.table('submissions') \
-                .select('*, student:users(id, username, email)') \
+                .select('*, grader:users!submissions_grader_id_fkey(id, username, email), student:users!submissions_student_id_fkey(id, username, email)') \
                 .in_('assignment_id', assign_ids) \
                 .order('submitted_at', desc=True) \
                 .execute()
@@ -1130,10 +1133,13 @@ def list_course_submissions(request):
         for s in subs:
             try:
                 s['assignment_title'] = assign_map.get(str(s.get('assignment_id')), '')
-                # normalize nested student object if present
+                # normalize nested student and grader objects if present
                 st = s.get('student')
                 if isinstance(st, dict):
-                    s['student'] = { 'id': st.get('id'), 'username': st.get('username'), 'email': st.get('email') }
+                    s['student'] = {'id': st.get('id'), 'username': st.get('username'), 'email': st.get('email')}
+                gr = s.get('grader')
+                if isinstance(gr, dict):
+                    s['grader'] = {'id': gr.get('id'), 'username': gr.get('username'), 'email': gr.get('email')}
             except Exception:
                 # don't fail entire response for a single malformed row
                 logger.exception("Failed to normalize submission row: %s", s)
