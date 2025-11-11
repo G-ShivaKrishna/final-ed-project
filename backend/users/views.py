@@ -1069,3 +1069,76 @@ def update_course_resource(request):
         return Response(updated, status=200)
     except Exception as e:
         return Response({"error": str(e)}, status=500)
+
+
+@api_view(['GET'])
+def list_course_submissions(request):
+    """
+    Instructor view: list all submissions for assignments in a course.
+    Query params: course_db_id (UUID) and instructor_id (UUID) required.
+    Returns list of submissions with assignment and student info.
+    """
+    course_db_id = request.GET.get('course_db_id')
+    instructor_id = request.GET.get('instructor_id')
+    if not course_db_id or not instructor_id:
+        return Response({"error": "course_db_id and instructor_id are required"}, status=400)
+
+    try:
+        # verify instructor owns the course
+        course_resp = supabase.table('courses').select('id, instructor_id').eq('id', course_db_id).execute()
+        if getattr(course_resp, 'error', None):
+            logger.error("courses lookup failed: %s", getattr(course_resp, 'error', None))
+            return Response({"error": str(course_resp.error)}, status=500)
+        course_row = _single_from_resp(course_resp)
+        if not course_row:
+            return Response({"error": "course_not_found"}, status=404)
+        if str(course_row.get('instructor_id')) != str(instructor_id):
+            return Response({"error": "forbidden"}, status=403)
+
+        # fetch assignments ids for this course
+        assign_resp = supabase.table('assignments').select('id, title').eq('course_db_id', course_db_id).execute()
+        if getattr(assign_resp, 'error', None):
+            logger.error("assignments lookup failed: %s", getattr(assign_resp, 'error', None))
+            return Response({"error": str(assign_resp.error)}, status=500)
+        assigns = _list_from_resp(assign_resp)
+        assign_ids = [a.get('id') for a in assigns if a.get('id')]
+
+        if not assign_ids:
+            return Response([])
+
+        # fetch submissions for these assignments and include student info
+        try:
+            subs_resp = supabase.table('submissions') \
+                .select('*, student:users(id, username, email)') \
+                .in_('assignment_id', assign_ids) \
+                .order('submitted_at', desc=True) \
+                .execute()
+            if getattr(subs_resp, 'error', None):
+                logger.error("submissions lookup failed: %s", getattr(subs_resp, 'error', None))
+                return Response({"error": str(subs_resp.error)}, status=500)
+            subs = _list_from_resp(subs_resp) or []
+        except APIError as e:
+            # Schema/cache issue — log and return empty set so instructor UI still works
+            logger.warning("Assignments/submissions table missing or PostgREST schema cache mismatch: %s", e)
+            subs = []
+        except Exception as e:
+            logger.exception("Unexpected error fetching submissions")
+            return Response({"error": "submissions_lookup_failed", "details": str(e)}, status=500)
+
+        # attach assignment title for convenience
+        assign_map = { str(a.get('id')): a.get('title') for a in assigns }
+        for s in subs:
+            try:
+                s['assignment_title'] = assign_map.get(str(s.get('assignment_id')), '')
+                # normalize nested student object if present
+                st = s.get('student')
+                if isinstance(st, dict):
+                    s['student'] = { 'id': st.get('id'), 'username': st.get('username'), 'email': st.get('email') }
+            except Exception:
+                # don't fail entire response for a single malformed row
+                logger.exception("Failed to normalize submission row: %s", s)
+        return Response(subs)
+    except Exception as e:
+        logger.exception("list_course_submissions failed unexpectedly")
+        # Return minimal error info to client but log full traceback for debugging
+        return Response({"error": "internal_server_error", "details": str(e)}, status=500)

@@ -4,6 +4,7 @@ import Signup from './Signup';
 import Login from './Login';
 import StudentDashboard from './student/StudentDashboard';
 import InstructorDashboard from './instructor/InstructorDashboard';
+import CreateCourse from './instructor/CreateCourse';
 import ViewGrades from './student/ViewGrades';
 import CourseSettings from './student/CourseSettings';
 import InboxPage from './student/InboxPage';
@@ -90,6 +91,9 @@ function RoutesWrapper({
 
   return (
     <Routes>
+      {/* Instructor create course route */}
+      <Route path="/instructor/create" element={<CreateCourse />} />
+
       <Route
         path="/"
         element={

@@ -1,6 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import SubmissionList from '../components/SubmissionList';
+import { fetchCourseSubmissions } from '../lib/api';
 
 type Course = {
   id: string;
@@ -174,19 +176,18 @@ export default function CoursesList(): JSX.Element {
         const ajson = await ares.json().catch(() => []);
         if (ares.ok) {
           // normalize incoming assignment rows: ensure due_date is ISO and course.code exists
-          const normalized = (ajson || []).map((a: any) => {
+          // keep normalized assignments in a local var so we can attach submissions below
+          const normalizedAssignments = (ajson || []).map((a: any) => {
             if (a.course && !a.course.code) a.course.code = a.course.course_id || a.course.courseId || a.course.code;
             if (a.due_date) {
               try {
-                // convert to canonical ISO so datetime-local and calendar logic behave consistently
                 a.due_date = new Date(a.due_date).toISOString();
-              } catch (_) {
-                // leave as-is if parsing fails
-              }
+              } catch (_) { /* leave as-is */ }
             }
             return a;
           });
-          setAssignments(normalized);
+          // set state from the normalized local copy
+          setAssignments(normalizedAssignments);
         } else setAssignments([]);
       } catch {
         setAssignments([]);
@@ -200,6 +201,27 @@ export default function CoursesList(): JSX.Element {
         else setResources([]);
       } catch {
         setResources([]);
+      }
+      // new: fetch all submissions for this course (instructor view)
+      try {
+        const subs = await fetchCourseSubmissions(course.id, instructorId);
+        // subs expected to be array of submissions with student info and assignment reference
+        // attach submissions to the previously-normalized assignments (use the local normalized array if available)
+        if (Array.isArray(subs) && subs.length > 0) {
+          const map = new Map<string, any[]>();
+          subs.forEach((s: any) => {
+            const aid = String(s.assignment_id);
+            if (!map.has(aid)) map.set(aid, []);
+            map.get(aid).push(s);
+          });
+          // read current assignments from state (fallback to []) then attach submissions
+          setAssignments((prev) => {
+            const base = Array.isArray(prev) ? prev : [];
+            return base.map((a: any) => ({ ...a, submissions: map.get(String(a.id)) || [] }));
+          });
+        }
+      } catch (_e) {
+        // ignore
       }
     } catch (err: any) {
       setRequests([]);
@@ -358,8 +380,8 @@ export default function CoursesList(): JSX.Element {
     <div className="bg-white rounded-xl p-6 shadow-sm">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate(-1)} className="px-3 py-1 border rounded-md">Back</button>
-          <button onClick={() => navigate('/instructor')} className="px-3 py-1 border rounded-md">Dashboard</button>
+          <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-1 border rounded-md">Back</button>
+          <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-1 border rounded-md">Dashboard</button>
           <h3 className="text-lg font-medium text-slate-800 ml-3">My courses</h3>
         </div>
         <button onClick={() => navigate('/instructor/create')} className="text-sm px-3 py-1 bg-indigo-600 text-white rounded-md">New course</button>
@@ -396,8 +418,8 @@ export default function CoursesList(): JSX.Element {
                 <div className="text-xs text-slate-500 mt-1">Instructor: {instructorEmail ?? '—'}</div>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => navigate(-1)} className="px-3 py-2 border rounded-md">Back</button>
-                <button onClick={() => navigate('/instructor')} className="px-3 py-2 border rounded-md">Dashboard</button>
+                <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-2 border rounded-md">Back</button>
+                <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-2 border rounded-md">Dashboard</button>
                 <button onClick={() => { setSelectedCourse(null); setRequests(null); setStudents(null); }} className="px-3 py-2 border rounded-md">Close</button>
                 <button onClick={() => { /* optional: navigate to full course editor route later */ }} className="px-3 py-2 bg-indigo-600 text-white rounded-md">Open editor</button>
                 <button onClick={() => deleteCourse(selectedCourse)} className="px-3 py-2 bg-red-600 text-white rounded-md">Delete course</button>
@@ -417,17 +439,23 @@ export default function CoursesList(): JSX.Element {
               {assignments && assignments.length > 0 ? (
                 <ul className="space-y-2">
                   {assignments.map((a: any) => (
-                    <li key={a.id} className="border rounded p-3 flex items-center justify-between">
-                      <div>
-                        <div className="text-sm font-medium">{a.title}</div>
-                        <div className="text-xs text-slate-500">{a.due_date ? new Date(a.due_date).toLocaleString() : 'No due date'}</div>
-                        {/* render any http(s) URL in description as a download link */}
-                        {a.description && (() => {
-                          const m = String(a.description).match(/https?:\/\/\S+/);
-                          return m ? <div className="text-xs mt-1"><a href={m[0]} target="_blank" rel="noreferrer" className="text-indigo-600">Download attachment</a></div> : null;
-                        })()}
+                    <li key={a.id} className="border rounded p-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-sm font-medium">{a.title}</div>
+                          <div className="text-xs text-slate-500">{a.due_date ? new Date(a.due_date).toLocaleString() : 'No due date'}</div>
+                          {a.description && (() => {
+                            const m = String(a.description).match(/https?:\/\/\S+/);
+                            return m ? <div className="text-xs mt-1"><a href={m[0]} target="_blank" rel="noreferrer" className="text-indigo-600">Download attachment</a></div> : null;
+                          })()}
+                        </div>
+                        <div className="text-xs text-slate-400">{a.points ? `${a.points} pts` : ''}</div>
                       </div>
-                      <div className="text-xs text-slate-400">{a.points ? `${a.points} pts` : ''}</div>
+                      {/* render submissions for this assignment (if any) */}
+                      <div className="mt-3">
+                        <h5 className="text-xs text-slate-500 mb-2">Submissions</h5>
+                        <SubmissionList submissions={a.submissions || []} />
+                      </div>
                     </li>
                   ))}
                 </ul>
