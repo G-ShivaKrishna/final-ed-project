@@ -174,10 +174,21 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
     };
   }, []);
 
-  const handleRefresh = () => {
-    // In a real app this would re-fetch data; here we just close the menu.
-    console.log('Refresh requested');
+  const handleRefresh = async () => {
+    // Re-fetch dashboard data so the UI reflects latest server state.
     setMenuOpen(false);
+    try {
+      // re-run main data loaders in parallel
+      await Promise.allSettled([fetchAssignments(), fetchProfileSummary(), fetchEnrolledCourses()]);
+      // if a course modal is open, refresh its details (so new syllabus/assignments appear)
+      if (courseModalOpen && activeCourseId) {
+        // activeCourseName may be null but loadCourseDetails will resolve it if possible
+        await loadCourseDetails({ id: activeCourseId, name: activeCourseName ?? undefined });
+      }
+    } catch (err) {
+      // non-fatal; log for debugging
+      console.error('Refresh failed', err);
+    }
   };
 
   const handleExportCSV = () => {
@@ -244,38 +255,114 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
       const userId = sessionData?.session?.user?.id;
       if (!userId) return;
 
-      // enrollments.course_id references courses.course_id (text); select related course row
+      // Query enrollments and include the related course row (only existing columns).
+      // Note: the courses table does not have a `color` column in your schema — avoid selecting it.
       const resp = await supabase
         .from('enrollments')
-        .select('course: courses(id, course_id, name, color)')
+        .select('course: courses(id, course_id, name), course_id')
         .eq('student_id', userId)
-        .order('joined_at', { ascending: false })
-        .execute ? await (supabase as any).from('enrollments').select('course: courses(id, course_id, name, color)').eq('student_id', userId).order('joined_at', { ascending: false }) : await supabase.from('enrollments').select('course: courses(id, course_id, name, color)').eq('student_id', userId).order('joined_at', { ascending: false });
+        .order('joined_at', { ascending: false });
 
-      // normalize depending on client shape
-      const rows: any[] = (resp?.data || resp) as any[];
-      const courses = (rows || []).map((r) => r.course).filter(Boolean);
-      setJoinedCourses(courses.slice(0, 6)); // keep a reasonable number
+      // Normalize different client shapes:
+      // - resp may be { data, error } (supabase-js v2)
+      // - resp.data may be an array of rows
+      // - resp may be an array directly in some older helpers
+      const error = (resp as any)?.error;
+      if (error) {
+        console.warn('enrollments query returned error', error);
+        setJoinedCourses([]);
+        return;
+      }
+
+      const respData = (resp as any)?.data ?? resp;
+      if (!respData) {
+        setJoinedCourses([]);
+        return;
+      }
+
+      // respData should be an array of enrollment rows. Normalize to course objects.
+      const rowsArray = Array.isArray(respData) ? respData : [];
+
+      // If rows contain nested course objects, use them. Otherwise try to resolve by course_id.
+      const nestedCourses = rowsArray.map((r: any) => r?.course).filter(Boolean);
+      if (nestedCourses.length > 0) {
+        const normalized = nestedCourses.map((c: any) => ({ id: c.id, code: c.course_id ?? '', name: c.name ?? '', color: c.color ?? '' }));
+        setJoinedCourses(normalized.slice(0, 6));
+        return;
+      }
+
+      // If rows only include course_id strings, resolve course rows
+      const codes = Array.from(new Set(rowsArray.map((r: any) => r.course_id).filter(Boolean)));
+      if (codes.length === 0) {
+        setJoinedCourses([]);
+        return;
+      }
+
+      const { data: courseRows, error: courseErr } = await supabase
+        .from('courses')
+        .select('id, course_id, name, color')
+        .in('course_id', codes);
+      if (courseErr) {
+        console.warn('Failed to resolve course rows for enrolled codes', courseErr);
+        setJoinedCourses([]);
+        return;
+      }
+      const courses = (courseRows || []).map((c: any) => ({ id: c.id, code: c.course_id ?? '', name: c.name ?? '', color: c.color ?? '' }));
+      setJoinedCourses(courses.slice(0, 6));
     } catch (err) {
       console.error('fetchEnrolledCourses error', err);
+      setJoinedCourses([]);
     }
   }
 
-  // load course details (resources + assignments) for a joined course (student view)
+  // openCourse / loadCourseDetails: resolve course_db_id (UUID) if caller passed a code instead
   async function loadCourseDetails(course: { id: string | number; code?: string; name?: string }) {
     setCourseLoading(true);
     setCourseResources([]);
     setCourseAssignments([]);
     setActiveCourseId(course.id);
     setActiveCourseName(course.name ?? course.code ?? '');
+
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const userId = sessionData?.session?.user?.id;
+      if (!userId) throw new Error('Not authenticated');
+
       const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+
+      // Resolve course_db_id:
+      // If the provided course.id is a valid UUID present in courses.id -> use it.
+      // Otherwise, treat it as a course code and lookup the DB id.
+      let courseDbId = String(course.id);
+      try {
+        // quick check: does a course with this id exist?
+        const test = await supabase.from('courses').select('id, course_id, name').eq('id', courseDbId).single();
+        if (!test?.data) {
+          // try resolving by course_id (text code)
+          const byCode = await supabase.from('courses').select('id, course_id, name').eq('course_id', String(course.id)).single();
+          if (byCode?.data && byCode.data.id) {
+            courseDbId = byCode.data.id;
+            // also update activeCourseName if missing
+            if (!course.name && byCode.data.name) setActiveCourseName(byCode.data.name);
+          } else {
+            // course not found by id or code: bail out
+            throw new Error('Course not found');
+          }
+        } else {
+          // test.data exists -> ensure activeCourseName present
+          if (!course.name && test.data.name) setActiveCourseName(test.data.name);
+        }
+      } catch (resolveErr) {
+        console.error('Failed to resolve course DB id', resolveErr);
+        setCourseLoading(false);
+        setCourseResources([]);
+        setCourseAssignments([]);
+        return;
+      }
 
       // fetch resources
       try {
-        const rres = await fetch(`${API_BASE}/users/courses/resources/?course_db_id=${encodeURIComponent(String(course.id))}&user_id=${encodeURIComponent(String(userId))}`);
+        const rres = await fetch(`${API_BASE}/users/courses/resources/?course_db_id=${encodeURIComponent(String(courseDbId))}&user_id=${encodeURIComponent(String(userId))}`);
         const rjson = await rres.json().catch(() => []);
         if (rres.ok) setCourseResources(rjson || []);
         else setCourseResources([]);
@@ -283,18 +370,30 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
         setCourseResources([]);
       }
 
-      // fetch assignments for this course (student view)
+      // fetch assignments for this course (student view).
+      // The backend now returns assignment.course and any submission by the requesting user.
       try {
-        const ares = await fetch(`${API_BASE}/users/courses/assignments/?course_db_id=${encodeURIComponent(String(course.id))}&user_id=${encodeURIComponent(String(userId))}`);
+        const ares = await fetch(`${API_BASE}/users/courses/assignments/?course_db_id=${encodeURIComponent(String(courseDbId))}&user_id=${encodeURIComponent(String(userId))}`);
         const ajson = await ares.json().catch(() => []);
-        if (ares.ok) setCourseAssignments(ajson || []);
-        else setCourseAssignments([]);
+        if (ares.ok) {
+          // Normalize assignments if needed (ensure course.code exists)
+          const normalized = (ajson || []).map((a: any) => {
+            if (a.course && !a.course.code) a.course.code = a.course.course_id || a.course.courseId || a.course.code;
+            return a;
+          });
+          setCourseAssignments(normalized);
+        } else {
+          setCourseAssignments([]);
+        }
       } catch (e) {
         setCourseAssignments([]);
       }
+
       setCourseModalOpen(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error('loadCourseDetails error', err);
+      setCourseResources([]);
+      setCourseAssignments([]);
     } finally {
       setCourseLoading(false);
     }
@@ -501,15 +600,35 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
           </div>
         </header>
 
-        {uploadError && (
-          <div className="fixed top-6 right-6 z-50 bg-red-50 text-red-700 border border-red-200 px-4 py-2 rounded flex items-center gap-3">
-            <div className="text-sm">{uploadError}</div>
-            <button onClick={() => setUploadError(null)} className="text-sm text-red-600 underline">Dismiss</button>
+        {/* Recently joined courses strip */}
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm text-slate-600 font-medium">Recently joined</h3>
+            <button onClick={() => navigate('/courses')} className="text-xs text-indigo-600 hover:underline">View all</button>
           </div>
-        )}
+          <div className="flex gap-3 overflow-x-auto pb-2">
+            {(joinedCourses && joinedCourses.length > 0) ? joinedCourses.slice(0, 6).map((c) => (
+              <div key={String(c.id)} className="min-w-[220px] bg-white rounded-lg p-3 shadow-sm flex-shrink-0">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800 truncate">{c.name ?? c.code ?? 'Course'}</div>
+                    <div className="text-xs text-slate-500 mt-1">{c.code ?? ''}</div>
+                  </div>
+                  <div className="text-xs text-indigo-600 font-medium">Joined</div>
+                </div>
+                <div className="mt-3 flex items-center justify-between">
+                  <button onClick={() => loadCourseDetails({ id: c.id, code: c.code, name: (c as any).name })} className="px-3 py-1 bg-indigo-600 text-white rounded-md text-sm">Open</button>
+                  <button onClick={() => navigate(`/courses/${c.id}`)} className="px-3 py-1 border rounded-md text-sm">Details</button>
+                </div>
+              </div>
+            )) : (
+              <div className="text-sm text-slate-500">No recently joined courses</div>
+            )}
+          </div>
+        </div>
 
         {/* Recent posts: latest assignment posts */}
-          <div className="mb-6">
+        <div className="mb-6">
           <h3 className="text-sm text-slate-600 font-medium mb-3">Recent posts</h3>
           <div className="flex flex-col sm:flex-row gap-3 items-stretch">
             {recentPosts.map((p) => (

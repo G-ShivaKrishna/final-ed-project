@@ -291,9 +291,10 @@ def dashboard_summary(request):
 
 		# 2) fetch assignments for these courses
 		try:
+			# assignments reference the courses table via course_db_id (UUID) — query by that column
 			assign_resp = supabase.table('assignments') \
 				.select('*, course:courses(*)') \
-				.in_('course_id', course_ids) \
+				.in_('course_db_id', course_ids) \
 				.order('due_date', desc=False) \
 				.execute()
 			if getattr(assign_resp, 'error', None):
@@ -595,83 +596,30 @@ def list_enrolled_students(request):
         return Response({"error": str(e)}, status=500)
 
 
-@api_view(['POST'])
-def delete_course(request):
-    """Delete a course (instructor only).
-
-    Expects JSON body: { course_db_id: <courses.id>, instructor_id: <auth user id> }
-    Returns: { result: "deleted" } on success.
+def resolve_course_by_identifier(identifier: str):
     """
-    data = request.data
-    course_db_id = data.get('course_db_id')
-    instructor_id = data.get('instructor_id')
-    if not course_db_id or not instructor_id:
-        return Response({"error": "course_db_id and instructor_id are required"}, status=400)
-
+    Resolve a course by either its UUID 'id' or its textual course_id (code).
+    Returns the course row dict or None.
+    """
+    if not identifier:
+        return None
     try:
-        # verify course exists and belongs to instructor
-        course_resp = supabase.table('courses').select('id, instructor_id, course_id').eq('id', course_db_id).execute()
-        if getattr(course_resp, 'error', None):
-            return Response({"error": str(course_resp.error)}, status=500)
-        course_row = _single_from_resp(course_resp)
-        if not course_row:
-            return Response({"error": "course_not_found"}, status=404)
-        if str(course_row.get('instructor_id')) != str(instructor_id):
-            return Response({"error": "forbidden"}, status=403)
-
-        # perform delete (DB cascade will remove related rows if configured)
-        del_resp = supabase.table('courses').delete().eq('id', course_db_id).execute()
-        if getattr(del_resp, 'error', None):
-            return Response({"error": str(del_resp.error)}, status=500)
-
-        return Response({"result": "deleted"}, status=200)
-    except Exception as e:
-        return Response({"error": str(e)}, status=500)
-
-
-# --- Assignments & submissions & resources endpoints ---
-
-@api_view(['POST'])
-def create_assignment(request):
-    """
-    Instructor creates an assignment for a course.
-    Body JSON: { instructor_id, course_db_id, title, description?, due_date?, points? }
-    Returns created assignment row.
-    """
-    data = request.data
-    instructor_id = data.get('instructor_id')
-    course_db_id = data.get('course_db_id')
-    title = data.get('title')
-    if not instructor_id or not course_db_id or not title:
-        return Response({"error": "instructor_id, course_db_id and title are required"}, status=400)
-
-    try:
-        # verify instructor owns the course
-        course_resp = supabase.table('courses').select('id, instructor_id').eq('id', course_db_id).execute()
-        if getattr(course_resp, 'error', None):
-            return Response({"error": str(course_resp.error)}, status=500)
-        course_row = _single_from_resp(course_resp)
-        if not course_row:
-            return Response({"error": "course_not_found"}, status=404)
-        if str(course_row.get('instructor_id')) != str(instructor_id):
-            return Response({"error": "forbidden"}, status=403)
-
-        payload = {
-            'course_db_id': course_db_id,
-            'title': title,
-            'description': data.get('description'),
-            'due_date': data.get('due_date'),
-            'points': data.get('points'),
-            'created_by': instructor_id,
-            'created_at': datetime.now().isoformat(),
-        }
-        resp = supabase.table('assignments').insert(payload).execute()
-        if getattr(resp, 'error', None):
-            return Response({"error": str(resp.error)}, status=500)
-        inserted = resp.data[0] if isinstance(resp.data, list) and resp.data else resp.data
-        return Response(inserted, status=201)
-    except Exception as e:
-        return Response({"error": str(e)}, status=500)
+        # try by id first
+        resp = supabase.table('courses').select('id, instructor_id, course_id, name').eq('id', identifier).execute()
+        if not getattr(resp, 'error', None):
+            row = _single_from_resp(resp)
+            if row:
+                return row
+        # fallback: try by course_id (text code)
+        resp2 = supabase.table('courses').select('id, instructor_id, course_id, name').eq('course_id', identifier).execute()
+        if not getattr(resp2, 'error', None):
+            row2 = _single_from_resp(resp2)
+            if row2:
+                return row2
+    except Exception:
+        # swallow and return None to allow caller to handle not-found
+        logger.exception("resolve_course_by_identifier failed for %s", identifier)
+    return None
 
 
 @api_view(['GET'])
@@ -686,11 +634,8 @@ def list_course_assignments(request):
         return Response({"error": "course_db_id and user_id are required"}, status=400)
 
     try:
-        # verify course exists
-        course_resp = supabase.table('courses').select('id, instructor_id, course_id').eq('id', course_db_id).execute()
-        if getattr(course_resp, 'error', None):
-            return Response({"error": str(course_resp.error)}, status=500)
-        course_row = _single_from_resp(course_resp)
+        # resolve course by either DB id or textual course code
+        course_row = resolve_course_by_identifier(course_db_id)
         if not course_row:
             return Response({"error": "course_not_found"}, status=404)
 
@@ -704,10 +649,57 @@ def list_course_assignments(request):
                 if not _single_from_resp(enroll_resp):
                     return Response({"error": "forbidden"}, status=403)
 
-        assign_resp = supabase.table('assignments').select('*').eq('course_db_id', course_db_id).order('due_date', desc=False).execute()
-        if getattr(assign_resp, 'error', None):
-            return Response({"error": str(assign_resp.error)}, status=500)
-        rows = _list_from_resp(assign_resp)
+        # fetch assignments and include the related course row (so frontend can access course.code)
+        try:
+            assign_resp = supabase.table('assignments') \
+                .select('*, course:courses(id, course_id, name)') \
+                .eq('course_db_id', course_db_id) \
+                .order('due_date', desc=False) \
+                .execute()
+            if getattr(assign_resp, 'error', None):
+                return Response({"error": str(assign_resp.error)}, status=500)
+            rows = _list_from_resp(assign_resp)
+        except APIError as e:
+            logger.warning("Assignments table missing or PostgREST schema cache mismatch: %s", e)
+            rows = []
+        except Exception as e:
+            logger.exception("Unexpected error fetching assignments")
+            return Response({"error": "assignments_lookup_failed", "details": str(e)}, status=500)
+
+        # Normalize course.course_id -> course.code for frontend
+        assignment_ids = []
+        for a in rows:
+            c = a.get('course')
+            if isinstance(c, dict):
+                c['code'] = c.get('course_id') or c.get('courseId') or c.get('code')
+            if a.get('id'):
+                assignment_ids.append(a.get('id'))
+
+        # Fetch student's submissions for these assignments and attach (if any)
+        submissions_map: dict = {}
+        if assignment_ids:
+            try:
+                subs_resp = supabase.table('submissions') \
+                    .select('*') \
+                    .in_('assignment_id', assignment_ids) \
+                    .eq('student_id', user_id) \
+                    .execute()
+                if getattr(subs_resp, 'error', None):
+                    logger.warning("submissions lookup error: %s", subs_resp.error)
+                else:
+                    subs_list = _list_from_resp(subs_resp)
+                    for s in subs_list:
+                        submissions_map[str(s.get('assignment_id'))] = s
+            except Exception as e:
+                logger.exception("Failed to fetch submissions for user")
+
+        # attach submission to assignments
+        for a in rows:
+            aid = str(a.get('id')) if a.get('id') is not None else None
+            if aid and aid in submissions_map:
+                a['submission'] = submissions_map[aid]
+                a['status'] = submissions_map[aid].get('status', a.get('status', 'submitted'))
+
         return Response(rows)
     except Exception as e:
         return Response({"error": str(e)}, status=500)
@@ -874,11 +866,8 @@ def list_course_resources(request):
         return Response({"error": "course_db_id and user_id required"}, status=400)
 
     try:
-        # verify access: instructor or enrolled student
-        course_resp = supabase.table('courses').select('id, instructor_id, course_id').eq('id', course_db_id).execute()
-        if getattr(course_resp, 'error', None):
-            return Response({"error": str(course_resp.error)}, status=500)
-        course_row = _single_from_resp(course_resp)
+        # resolve course by either DB id or textual course code
+        course_row = resolve_course_by_identifier(course_db_id)
         if not course_row:
             return Response({"error": "course_not_found"}, status=404)
 
@@ -895,5 +884,82 @@ def list_course_resources(request):
             return Response({"error": str(res.error)}, status=500)
         rows = _list_from_resp(res)
         return Response(rows)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(['POST'])
+def delete_course(request):
+    """Delete a course (instructor only).
+
+    Expects JSON body: { course_db_id: <courses.id>, instructor_id: <auth user id> }
+    Returns: { result: "deleted" } on success.
+    """
+    data = request.data
+    course_db_id = data.get('course_db_id')
+    instructor_id = data.get('instructor_id')
+    if not course_db_id or not instructor_id:
+        return Response({"error": "course_db_id and instructor_id are required"}, status=400)
+
+    try:
+        # verify course exists and belongs to instructor
+        course_resp = supabase.table('courses').select('id, instructor_id, course_id').eq('id', course_db_id).execute()
+        if getattr(course_resp, 'error', None):
+            return Response({"error": str(course_resp.error)}, status=500)
+        course_row = _single_from_resp(course_resp)
+        if not course_row:
+            return Response({"error": "course_not_found"}, status=404)
+        if str(course_row.get('instructor_id')) != str(instructor_id):
+            return Response({"error": "forbidden"}, status=403)
+
+        # perform delete (DB cascade will remove related rows if configured)
+        del_resp = supabase.table('courses').delete().eq('id', course_db_id).execute()
+        if getattr(del_resp, 'error', None):
+            return Response({"error": str(del_resp.error)}, status=500)
+
+        return Response({"result": "deleted"}, status=200)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(['POST'])
+def create_assignment(request):
+    """
+    Instructor creates an assignment for a course.
+    Body JSON: { instructor_id, course_db_id, title, description?, due_date?, points? }
+    Returns created assignment row.
+    """
+    data = request.data
+    instructor_id = data.get('instructor_id')
+    course_db_id = data.get('course_db_id')
+    title = data.get('title')
+    if not instructor_id or not course_db_id or not title:
+        return Response({"error": "instructor_id, course_db_id and title are required"}, status=400)
+
+    try:
+        # verify instructor owns the course
+        course_resp = supabase.table('courses').select('id, instructor_id').eq('id', course_db_id).execute()
+        if getattr(course_resp, 'error', None):
+            return Response({"error": str(course_resp.error)}, status=500)
+        course_row = _single_from_resp(course_resp)
+        if not course_row:
+            return Response({"error": "course_not_found"}, status=404)
+        if str(course_row.get('instructor_id')) != str(instructor_id):
+            return Response({"error": "forbidden"}, status=403)
+
+        payload = {
+            'course_db_id': course_db_id,
+            'title': title,
+            'description': data.get('description'),
+            'due_date': data.get('due_date'),
+            'points': data.get('points'),
+            'created_by': instructor_id,
+            'created_at': datetime.now().isoformat(),
+        }
+        resp = supabase.table('assignments').insert(payload).execute()
+        if getattr(resp, 'error', None):
+            return Response({"error": str(resp.error)}, status=500)
+        inserted = resp.data[0] if isinstance(resp.data, list) and resp.data else resp.data
+        return Response(inserted, status=201)
     except Exception as e:
         return Response({"error": str(e)}, status=500)
