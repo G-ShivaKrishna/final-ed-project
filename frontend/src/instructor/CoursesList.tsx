@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 
@@ -39,6 +39,30 @@ export default function CoursesList(): JSX.Element {
 
   const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
   const navigate = useNavigate();
+
+  // file upload state & refs for assignment/resource attachments
+  const [assignFile, setAssignFile] = useState<File | null>(null);
+  const [resFile, setResFile] = useState<File | null>(null);
+  const assignFileRef = useRef<HTMLInputElement | null>(null);
+  const resFileRef = useRef<HTMLInputElement | null>(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
+
+  // helper: upload a file to Supabase storage 'assignments' bucket and return public URL (best-effort)
+  async function uploadAssignmentFile(file: File, courseId: string) {
+    if (!file) return '';
+    try {
+      const path = `${courseId}/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+      const { data, error } = await supabase.storage.from('assignments').upload(path, file, { upsert: true });
+      if (error) throw error;
+      // getPublicUrl shape: { data: { publicUrl } }
+      const urlRes = await supabase.storage.from('assignments').getPublicUrl(path);
+      const publicUrl = (urlRes as any)?.data?.publicUrl || (urlRes as any)?.publicURL || '';
+      return publicUrl;
+    } catch (err) {
+      console.warn('file upload failed', err);
+      return '';
+    }
+  }
 
   // move fetchCourses out so we can re-use it after delete
   async function fetchCourses() {
@@ -194,13 +218,22 @@ export default function CoursesList(): JSX.Element {
       const instructorId = sessionData?.session?.user?.id;
       if (!instructorId) throw new Error('Not authenticated');
 
+      // optionally upload an attached file and append its public URL into the description
+      let description = assignForm.description ?? '';
+      if (assignFile) {
+        setUploadingFile(true);
+        const pub = await uploadAssignmentFile(assignFile, selectedCourse.id);
+        setUploadingFile(false);
+        if (pub) description = `${description}\n\nAttachment: ${pub}`;
+      }
+
       // convert datetime-local (local) -> ISO before sending
       const dueIso = assignForm.due_date ? new Date(assignForm.due_date).toISOString() : null;
       const payload = {
         instructor_id: instructorId,
         course_db_id: selectedCourse.id,
         title: assignForm.title,
-        description: assignForm.description,
+        description: description,
         due_date: dueIso,
         points: assignForm.points ? Number(assignForm.points) : null,
       };
@@ -213,6 +246,7 @@ export default function CoursesList(): JSX.Element {
       await openCourseModal(selectedCourse);
       setAddAssignOpen(false);
       setAssignForm({ title: '', description: '', due_date: '', points: '' });
+      setAssignFile(null);
     } catch (err: any) {
       setError(err?.message || String(err));
     }
@@ -225,12 +259,21 @@ export default function CoursesList(): JSX.Element {
       const { data: sessionData } = await supabase.auth.getSession();
       const instructorId = sessionData?.session?.user?.id;
       if (!instructorId) throw new Error('Not authenticated');
+      // optionally upload a file for syllabus and append link into content
+      let content = resForm.content ?? '';
+      if (resFile && resForm.type === 'syllabus') {
+        setUploadingFile(true);
+        const pub = await uploadAssignmentFile(resFile, selectedCourse.id);
+        setUploadingFile(false);
+        if (pub) content = `${content}\n\nAttachment: ${pub}`;
+      }
+
       const payload = {
         instructor_id: instructorId,
         course_db_id: selectedCourse.id,
         type: resForm.type,
         title: resForm.title,
-        content: resForm.content,
+        content: content,
         video_url: resForm.video_url,
       };
       const res = await fetch(`${API_BASE}/users/courses/resources/add/`, {
@@ -242,6 +285,7 @@ export default function CoursesList(): JSX.Element {
       await openCourseModal(selectedCourse);
       setAddResOpen(false);
       setResForm({ type: 'syllabus', title: '', content: '', video_url: '' });
+      setResFile(null);
     } catch (err: any) {
       setError(err?.message || String(err));
     }
@@ -377,6 +421,11 @@ export default function CoursesList(): JSX.Element {
                       <div>
                         <div className="text-sm font-medium">{a.title}</div>
                         <div className="text-xs text-slate-500">{a.due_date ? new Date(a.due_date).toLocaleString() : 'No due date'}</div>
+                        {/* render any http(s) URL in description as a download link */}
+                        {a.description && (() => {
+                          const m = String(a.description).match(/https?:\/\/\S+/);
+                          return m ? <div className="text-xs mt-1"><a href={m[0]} target="_blank" rel="noreferrer" className="text-indigo-600">Download attachment</a></div> : null;
+                        })()}
                       </div>
                       <div className="text-xs text-slate-400">{a.points ? `${a.points} pts` : ''}</div>
                     </li>
@@ -491,6 +540,11 @@ export default function CoursesList(): JSX.Element {
               />
               <input value={assignForm.points} onChange={(e) => setAssignForm((s) => ({ ...s, points: e.target.value }))} placeholder="Points" className="w-full border px-2 py-1 rounded" />
               <textarea value={assignForm.description} onChange={(e) => setAssignForm((s) => ({ ...s, description: e.target.value }))} placeholder="Description" className="w-full border px-2 py-2 rounded h-24" />
+              <div>
+                <input ref={assignFileRef} type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={(e) => setAssignFile(e.target.files?.[0] ?? null)} />
+                <button type="button" onClick={() => assignFileRef.current?.click()} className="px-3 py-1 border rounded text-sm">{assignFile ? assignFile.name : 'Attach document (PDF/DOC)'}</button>
+                {uploadingFile && <span className="text-xs text-slate-500 ml-2">Uploading…</span>}
+              </div>
             </div>
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => setAddAssignOpen(false)} className="px-3 py-1 border rounded">Cancel</button>
@@ -516,6 +570,13 @@ export default function CoursesList(): JSX.Element {
                 <textarea value={resForm.content} onChange={(e) => setResForm((s) => ({ ...s, content: e.target.value }))} placeholder="Syllabus text" className="w-full border px-2 py-2 rounded h-28" />
               ) : (
                 <input value={resForm.video_url} onChange={(e) => setResForm((s) => ({ ...s, video_url: e.target.value }))} placeholder="YouTube URL" className="w-full border px-2 py-1 rounded" />
+              )}
+              {resForm.type === 'syllabus' && (
+                <div>
+                  <input ref={resFileRef} type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={(e) => setResFile(e.target.files?.[0] ?? null)} />
+                  <button type="button" onClick={() => resFileRef.current?.click()} className="px-3 py-1 border rounded text-sm">{resFile ? resFile.name : 'Attach syllabus document'}</button>
+                  {uploadingFile && <span className="text-xs text-slate-500 ml-2">Uploading…</span>}
+                </div>
               )}
             </div>
             <div className="mt-4 flex justify-end gap-2">

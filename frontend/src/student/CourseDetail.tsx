@@ -1,6 +1,7 @@
 import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 type Material = { id: string; title: string; uploadedAt: string; link?: string; description?: string; type?: string };
 type Assignment = { id: string; title: string; due_date: string; status: string; points?: number; description?: string; postedAt?: string; submitted_file?: string };
@@ -52,21 +53,88 @@ const SAMPLE_ASSIGNMENTS: Record<string, Assignment[]> = {
 };
 
 export default function CourseDetail(): JSX.Element {
-  const { id } = useParams();
+  const params = useParams();
+  const idParam = (params as any).id ?? (params as any).courseId ?? (params as any).course_db_id ?? null;
   const navigate = useNavigate();
-  const course = SAMPLE_COURSES.find((c) => c.id === id) ?? { id: id ?? 'unknown', code: id ?? '', title: 'Course' };
+  const course = SAMPLE_COURSES.find((c) => c.id === idParam) ?? { id: idParam ?? 'unknown', code: idParam ?? '', title: 'Course' };
   const [tab, setTab] = React.useState<'syllabus' | 'assignments'>('syllabus');
 
-  const syllabus = SAMPLE_SYLLABUS[id as string] ?? [];
-  const initialAssignments = SAMPLE_ASSIGNMENTS[id as string] ?? [];
-  const [assignmentsState, setAssignmentsState] = React.useState<Assignment[]>(initialAssignments);
+  // UI state: prefer backend data but fall back to SAMPLE fixtures
+  const [syllabusState, setSyllabusState] = React.useState<Material[]>(SAMPLE_SYLLABUS[idParam as string] ?? []);
+  const [assignmentsState, setAssignmentsState] = React.useState<Assignment[]>(SAMPLE_ASSIGNMENTS[idParam as string] ?? []);
+  const [loading, setLoading] = React.useState<boolean>(!!idParam);
+  const [error, setError] = React.useState<string | null>(null);
 
   // file upload refs/state for submitting assignments (PDF only)
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [pendingUploadFor, setPendingUploadFor] = React.useState<string | number | null>(null);
+  const [uploadCourseId, setUploadCourseId] = React.useState<string | number | null>(idParam);
   const [uploadError, setUploadError] = React.useState<string | null>(null);
   const [uploading, setUploading] = React.useState(false);
-  
+  // helper: upload file to 'submissions' bucket and return public URL
+  async function uploadSubmissionFile(file: File, courseId: string | number, assignmentId: string | number, studentId: string) {
+    if (!file) return '';
+    try {
+      const path = `${courseId}/${assignmentId}/${studentId}_${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+      const { data, error } = await supabase.storage.from('submissions').upload(path, file, { upsert: true });
+      if (error) throw error;
+      const urlRes = await supabase.storage.from('submissions').getPublicUrl(path);
+      const publicUrl = (urlRes as any)?.data?.publicUrl || (urlRes as any)?.publicURL || '';
+      return publicUrl;
+    } catch (err) {
+      console.warn('uploadSubmissionFile failed', err);
+      return '';
+    }
+  }
+
+  React.useEffect(() => {
+    let mounted = true;
+    async function fetchCourseData() {
+      if (!idParam) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const userId = sessionData?.session?.user?.id;
+        const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+
+        // resources
+        try {
+          const rres = await fetch(`${API_BASE}/users/courses/resources/?course_db_id=${encodeURIComponent(String(idParam))}&user_id=${encodeURIComponent(String(userId ?? ''))}`);
+          const rjson = await rres.json().catch(() => []);
+          if (rres.ok && mounted) setSyllabusState(Array.isArray(rjson) ? rjson : (rjson?.data ?? []));
+        } catch (_e) {
+          // keep sample on error
+        }
+
+        // assignments
+        try {
+          const ares = await fetch(`${API_BASE}/users/courses/assignments/?course_db_id=${encodeURIComponent(String(idParam))}&user_id=${encodeURIComponent(String(userId ?? ''))}`);
+          const ajson = await ares.json().catch(() => []);
+          if (ares.ok && mounted) {
+            const normalized = (Array.isArray(ajson) ? ajson : (ajson?.data ?? [])).map((a: any) => {
+              // ensure due_date is ISO for consistent display
+              if (a.due_date) {
+                try { a.due_date = new Date(a.due_date).toISOString(); } catch (_) {}
+              }
+              if (a.course && !a.course.code) a.course.code = a.course.course_id || a.course.courseId || a.course.code;
+              return a;
+            });
+            if (normalized.length) setAssignmentsState(normalized);
+          }
+        } catch (_e) {
+          // keep sample on error
+        }
+      } catch (err: any) {
+        if (mounted) setError('Failed to load course data');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    fetchCourseData();
+    return () => { mounted = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idParam]);
 
   function markAsSubmitted(id: string | number, filename?: string) {
     setAssignmentsState((prev) => prev.map((m) => (m.id === id ? { ...m, status: m.status === 'graded' ? m.status : 'submitted', submitted_file: filename ?? m.submitted_file } : m)));
@@ -88,13 +156,57 @@ export default function CourseDetail(): JSX.Element {
       return;
     }
 
-    setUploading(true);
-    setUploadError(null);
-    setTimeout(() => {
-      markAsSubmitted(idFor, file.name);
-      setUploading(false);
-      setPendingUploadFor(null);
-    }, 700);
+    // upload to storage then POST to backend submit endpoint with public URL
+    (async () => {
+      setUploading(true);
+      setUploadError(null);
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const studentId = sessionData?.session?.user?.id;
+        if (!studentId) throw new Error('Not authenticated');
+        const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+        const courseDbId = uploadCourseId ?? idParam;
+
+        const publicUrl = await uploadSubmissionFile(file, courseDbId ?? 'public', idFor, studentId);
+        if (!publicUrl) throw new Error('Upload failed');
+
+        const body = { student_id: studentId, assignment_id: idFor, file_url: publicUrl };
+        const res = await fetch(`${API_BASE}/users/courses/assignments/submit/`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setUploadError(j?.error || `Submit failed: ${res.status}`);
+          markAsSubmitted(idFor, file.name);
+        } else {
+          // successful submit: mark locally and refresh assignments from backend
+          markAsSubmitted(idFor, file.name);
+          // refresh course assignments from backend to pull saved submission record
+          if (idParam) {
+            // re-run fetchCourseData
+            try {
+              const { data: sessionData2 } = await supabase.auth.getSession();
+              const userId = sessionData2?.session?.user?.id;
+              const ares = await fetch(`${API_BASE}/users/courses/assignments/?course_db_id=${encodeURIComponent(String(idParam))}&user_id=${encodeURIComponent(String(userId ?? ''))}`);
+              const ajson = await ares.json().catch(() => []);
+              if (ares.ok) {
+                const normalized = (Array.isArray(ajson) ? ajson : (ajson?.data ?? [])).map((a: any) => {
+                  if (a.due_date) { try { a.due_date = new Date(a.due_date).toISOString(); } catch (_) {} }
+                  return a;
+                });
+                if (normalized.length) setAssignmentsState(normalized);
+              }
+            } catch (_e) { /* ignore */ }
+          }
+        }
+      } catch (err: any) {
+        setUploadError(err?.message || String(err));
+        markAsSubmitted(idFor, file.name);
+      } finally {
+        setUploading(false);
+        setPendingUploadFor(null);
+      }
+    })();
   }
 
   return (
@@ -116,21 +228,39 @@ export default function CourseDetail(): JSX.Element {
 
           {tab === 'syllabus' ? (
             <div>
-              {syllabus.length === 0 ? (
+              {loading ? (
+                <div className="text-sm text-slate-500">Loading…</div>
+              ) : !syllabusState || syllabusState.length === 0 ? (
                 <div className="text-sm text-slate-500">No syllabus materials posted yet.</div>
               ) : (
                 <ul className="space-y-3">
-                  {syllabus.map((m) => (
+                  {syllabusState.map((m) => (
                     <li key={m.id} className="p-3 border rounded flex items-center justify-between">
                       <div>
                         <div className="flex items-center gap-2">
                           <div className="font-medium">{m.title}</div>
                           {m.type && <span className="text-xs text-slate-500 px-2 py-1 rounded bg-slate-100">{m.type}</span>}
                         </div>
-                        {m.description && <div className="text-sm text-slate-600 mt-1">{m.description}</div>}
-                        <div className="text-xs text-slate-500 mt-2">Uploaded {m.uploadedAt}</div>
+                        {m.description && (
+                          <div className="text-sm text-slate-600 mt-1">
+                            {(() => {
+                              const urlMatch = String(m.description).match(/https?:\/\/\S+/);
+                              if (urlMatch) {
+                                const before = String(m.description).split(urlMatch[0])[0];
+                                return (
+                                  <>
+                                    {before && <span>{before}</span>}
+                                    <div><a href={urlMatch[0]} target="_blank" rel="noreferrer" className="text-indigo-600">Download attachment</a></div>
+                                  </>
+                                );
+                              }
+                              return <span>{m.description}</span>;
+                            })()}
+                          </div>
+                        )}
+                        <div className="text-xs text-slate-500 mt-2">Uploaded {m.uploadedAt ?? m.created_at ?? ''}</div>
                       </div>
-                      <a href={m.link} className="text-indigo-600">View</a>
+                      <a href={m.link ?? m.video_url ?? '#'} className="text-indigo-600" target={m.link || m.video_url ? '_blank' : undefined} rel="noreferrer">View</a>
                     </li>
                   ))}
                 </ul>
@@ -138,7 +268,9 @@ export default function CourseDetail(): JSX.Element {
             </div>
           ) : (
             <div>
-              {assignmentsState.length === 0 ? (
+              {loading ? (
+                <div className="text-sm text-slate-500">Loading…</div>
+              ) : assignmentsState.length === 0 ? (
                 <div className="text-sm text-slate-500">No assignments posted yet.</div>
               ) : (
                 <ul className="space-y-3">
@@ -147,8 +279,28 @@ export default function CourseDetail(): JSX.Element {
                       <div className="flex items-center justify-between">
                         <div>
                           <div className="font-medium">{a.title}</div>
-                          {a.description && <div className="text-sm text-slate-600 mt-1">{a.description}</div>}
-                          <div className="text-xs text-slate-500 mt-2">Due {new Date(a.due_date).toLocaleDateString()}</div>
+                          {a.description && (
+                            <div className="text-sm text-slate-600 mt-1">
+                              {(() => {
+                                const urlMatch = String(a.description).match(/https?:\/\/\S+/);
+                                if (urlMatch) {
+                                  const before = String(a.description).split(urlMatch[0])[0];
+                                  return (
+                                    <>
+                                      {before && <span>{before}</span>}
+                                      <div><a href={urlMatch[0]} target="_blank" rel="noreferrer" className="text-indigo-600">Download attachment</a></div>
+                                    </>
+                                  );
+                                }
+                                return <span>{a.description}</span>;
+                              })()}
+                            </div>
+                          )}
+                          {/* if backend returned submission object with file_url, render download link */}
+                          {a.submission?.file_url && (
+                            <div className="text-xs text-slate-600 mt-1"><a href={a.submission.file_url} target="_blank" rel="noreferrer" className="text-indigo-600">Download your submission</a></div>
+                          )}
+                          <div className="text-xs text-slate-500 mt-2">Due {a.due_date ? new Date(a.due_date).toLocaleDateString() : 'No due date'}</div>
                           {a.postedAt && <div className="text-xs text-slate-400">Posted {a.postedAt}</div>}
                         </div>
                         <div className="text-xs text-slate-500">{a.points ?? '-'} pts</div>
