@@ -50,35 +50,52 @@ export default function ProfilePage(): JSX.Element {
     setEditing(false);
   }
 
-  function saveEdit() {
-    // persist to Supabase
-    (async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+  async function saveEdit() {
+  try {
+    // 1️⃣ Check if Django server is up
+    const djangoCheck = await fetch("http://127.0.0.1:8000/users/health/", { method: "GET" });
+    if (!djangoCheck.ok) {
+      alert("Server is offline. Please try again later.");
+      return;
+    }
 
-      const userId = session.user.id;
-      const payload: any = {
-        username: draft.fullName,
-        major: draft.major,
-        phone_number: draft.phone,
-        College: draft.college,
+    // 2️⃣ Proceed only if Django is up
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+
+    const userId = session.user.id;
+    const payload: any = {
+      username: draft.fullName,
+      major: draft.major,
+      phone_number: draft.phone,
+      College: draft.college,
+    };
+
+    const { data, error } = await supabase
+      .from('users')
+      .update(payload)
+      .eq('id', userId)
+      .select()
+      .single();
+
+    if (!error && data) {
+      const normalized = {
+        fullName: data.username,
+        email: data.email,
+        phone: data.phone_number ?? '',
+        major: data.major ?? '',
+        college: data.College ?? '',
       };
-
-      const { data, error } = await supabase.from('users').update(payload).eq('id', userId).select().single();
-      if (!error && data) {
-        const normalized = {
-          fullName: data.username,
-          email: data.email,
-          phone: data.phone_number ?? '',
-          major: data.major ?? '',
-          college: data.College ?? '',
-        };
-        setProfile(normalized);
-        setDraft(normalized);
-        setEditing(false);
-      }
-    })();
+      setProfile(normalized);
+      setDraft(normalized);
+      setEditing(false);
+    } else {
+      alert("Failed to update profile. Try again later.");
+    }
+  } catch (err) {
+    alert("Django server is offline or unreachable.");
   }
+}
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white p-6">

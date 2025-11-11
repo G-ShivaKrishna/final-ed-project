@@ -1,8 +1,10 @@
+import { useNavigate } from 'react-router-dom';
 import React, { useState, useEffect } from 'react';
 import supabase from '../supabaseClient';
 
 export default function Profile(): JSX.Element {
   const [userData, setUserData] = useState<any | null>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -26,6 +28,10 @@ export default function Profile(): JSX.Element {
 
   return (
     <div>
+      <div className="flex items-center gap-2 mb-4">
+        <button onClick={() => navigate(-1)} className="px-3 py-1 border rounded-md">Back</button>
+        <button onClick={() => navigate('/instructor')} className="px-3 py-1 border rounded-md">Dashboard</button>
+      </div>
       <h2>Profile</h2>
       <p><strong>Username:</strong> {userData.username}</p>
       <p><strong>Email:</strong> {userData.email}</p>

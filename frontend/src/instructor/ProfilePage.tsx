@@ -1,7 +1,7 @@
-import { useNavigate } from 'react-router-dom';
 import { User, ChevronLeft, Edit2, Save, X } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { useNavigate } from 'react-router-dom';
 
 export default function InstructorProfilePage(): JSX.Element {
   const navigate = useNavigate();
@@ -89,9 +89,12 @@ export default function InstructorProfilePage(): JSX.Element {
     <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white p-6">
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center gap-4 mb-6">
-          <button onClick={() => navigate(-1)} className="w-10 h-10 rounded-md bg-slate-100 flex items-center justify-center">
-            <ChevronLeft size={18} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => navigate(-1)} className="w-10 h-10 rounded-md bg-slate-100 flex items-center justify-center">
+              <ChevronLeft size={18} />
+            </button>
+            <button onClick={() => navigate('/instructor')} className="px-3 py-2 rounded-md bg-slate-100">Dashboard</button>
+          </div>
           <h1 className="text-2xl font-semibold text-slate-800">Instructor profile</h1>
         </div>
 

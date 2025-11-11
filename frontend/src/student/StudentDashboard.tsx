@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { ChevronRight, MoreVertical, User, Calendar, Clock, CheckCircle, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ChatBox from './ChatBot';
@@ -174,10 +174,21 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
     };
   }, []);
 
-  const handleRefresh = () => {
-    // In a real app this would re-fetch data; here we just close the menu.
-    console.log('Refresh requested');
+  const handleRefresh = async () => {
+    // Re-fetch dashboard data so the UI reflects latest server state.
     setMenuOpen(false);
+    try {
+      // re-run main data loaders in parallel
+      await Promise.allSettled([fetchAssignments(), fetchProfileSummary(), fetchEnrolledCourses()]);
+      // if a course modal is open, refresh its details (so new syllabus/assignments appear)
+      if (courseModalOpen && activeCourseId) {
+        // activeCourseName may be null but loadCourseDetails will resolve it if possible
+        await loadCourseDetails({ id: activeCourseId, name: activeCourseName ?? undefined });
+      }
+    } catch (err) {
+      // non-fatal; log for debugging
+      console.error('Refresh failed', err);
+    }
   };
 
   const handleExportCSV = () => {
@@ -216,6 +227,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
   const [joinModalOpen, setJoinModalOpen] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [joinStatus, setJoinStatus] = useState<string | null>(null);
+  const [joinLoading, setJoinLoading] = useState(false);
   const joinInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -227,67 +239,217 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
     }
   }, [joinModalOpen]);
 
-  // Derived data: joined courses and recent posts
-  // Build map of course -> latest assignment date, then pick 3 most recent courses
-  const courseMap = new Map<string | number, { course: { id: string | number; code?: string; color?: string }; latest: number }>();
-  groupedAssignments.forEach((g) => {
-    g.assignments.forEach((a) => {
-      if (a.course?.id != null) {
-        const id = a.course.id;
-        const ts = new Date(a.due_date).getTime();
-        const prev = courseMap.get(id);
-        if (!prev || ts > prev.latest) {
-          courseMap.set(id, { course: a.course as any, latest: ts });
-        }
+  // Joined courses (fetched from enrollments -> courses)
+  const [joinedCourses, setJoinedCourses] = useState<{ id: string | number; code?: string; color?: string }[]>([]);
+  // per-course modal + details for students
+  const [courseModalOpen, setCourseModalOpen] = useState(false);
+  const [activeCourseId, setActiveCourseId] = useState<string | number | null>(null);
+  const [activeCourseName, setActiveCourseName] = useState<string | null>(null);
+  const [courseResources, setCourseResources] = useState<any[]>([]);
+  const [courseAssignments, setCourseAssignments] = useState<any[]>([]);
+  const [courseLoading, setCourseLoading] = useState(false);
+
+  async function fetchEnrolledCourses() {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id;
+      if (!userId) return;
+
+      // Query enrollments and include the related course row (only existing columns).
+      // Note: the courses table does not have a `color` column in your schema — avoid selecting it.
+      const resp = await supabase
+        .from('enrollments')
+        .select('course: courses(id, course_id, name), course_id')
+        .eq('student_id', userId)
+        .order('joined_at', { ascending: false });
+
+      // Normalize different client shapes:
+      // - resp may be { data, error } (supabase-js v2)
+      // - resp.data may be an array of rows
+      // - resp may be an array directly in some older helpers
+      const error = (resp as any)?.error;
+      if (error) {
+        console.warn('enrollments query returned error', error);
+        setJoinedCourses([]);
+        return;
       }
-    });
-  });
-  const joinedCourses = Array.from(courseMap.values())
-    .sort((a, b) => b.latest - a.latest)
-    .map((x) => x.course)
-    .slice(0, 3);
 
-  const recentPosts = groupedAssignments
-    .flatMap((g) => g.assignments.map((a) => ({ ...a, groupDate: g.date })))
-    .sort((x, y) => new Date(y.due_date).getTime() - new Date(x.due_date).getTime())
-    .slice(0, 3);
+      const respData = (resp as any)?.data ?? resp;
+      if (!respData) {
+        setJoinedCourses([]);
+        return;
+      }
 
-  // Mini 7-day calendar with status per day based on assignments
-  const next7Days = Array.from({ length: 7 }).map((_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() + i);
-    return d;
-  });
+      // respData should be an array of enrollment rows. Normalize to course objects.
+      const rowsArray = Array.isArray(respData) ? respData : [];
 
-  const dateKey = (d: Date) => d.toISOString().slice(0, 10);
+      // If rows contain nested course objects, use them. Otherwise try to resolve by course_id.
+      const nestedCourses = rowsArray.map((r: any) => r?.course).filter(Boolean);
+      if (nestedCourses.length > 0) {
+        const normalized = nestedCourses.map((c: any) => ({ id: c.id, code: c.course_id ?? '', name: c.name ?? '', color: c.color ?? '' }));
+        setJoinedCourses(normalized.slice(0, 6));
+        return;
+      }
 
-  const assignmentsByDate = new Map<string, AssignmentWithCourse[]>();
-  groupedAssignments.forEach((g) => {
-    g.assignments.forEach((a) => {
-      const key = dateKey(new Date(a.due_date));
-      const arr = assignmentsByDate.get(key) ?? [];
-      arr.push(a);
-      assignmentsByDate.set(key, arr);
-    });
-  });
+      // If rows only include course_id strings, resolve course rows
+      const codes = Array.from(new Set(rowsArray.map((r: any) => r.course_id).filter(Boolean)));
+      if (codes.length === 0) {
+        setJoinedCourses([]);
+        return;
+      }
 
-  function dayStatusFor(date: Date) {
-    const key = dateKey(date);
-    const list = assignmentsByDate.get(key) ?? [];
-    if (list.length === 0) return { label: 'No due', color: 'bg-gray-100 text-gray-600' };
-    if (list.some((a) => a.status === 'missing')) return { label: 'Due', color: 'bg-red-50 text-red-700' };
-    if (list.some((a) => a.status === 'submitted')) return { label: 'Submitted', color: 'bg-blue-50 text-blue-700' };
-    if (list.every((a) => a.status === 'graded')) return { label: 'Graded', color: 'bg-green-50 text-green-700' };
-    return { label: 'Due', color: 'bg-yellow-50 text-yellow-700' };
+      const { data: courseRows, error: courseErr } = await supabase
+        .from('courses')
+        .select('id, course_id, name, color')
+        .in('course_id', codes);
+      if (courseErr) {
+        console.warn('Failed to resolve course rows for enrolled codes', courseErr);
+        setJoinedCourses([]);
+        return;
+      }
+      const courses = (courseRows || []).map((c: any) => ({ id: c.id, code: c.course_id ?? '', name: c.name ?? '', color: c.color ?? '' }));
+      setJoinedCourses(courses.slice(0, 6));
+    } catch (err) {
+      console.error('fetchEnrolledCourses error', err);
+      setJoinedCourses([]);
+    }
   }
 
-  const QuickActionButtons = () => (
-    <>
-      <button onClick={() => navigate('/grades')} className="text-left px-3 py-2 border rounded-md">View grades</button>
-      <button onClick={() => setAssignmentsOpen(true)} className="text-left px-3 py-2 border rounded-md">Assignments</button>
-      <button onClick={() => navigate('/inbox')} className="text-left px-3 py-2 border rounded-md">Inbox</button>
-    </>
-  );
+  // openCourse / loadCourseDetails: resolve course_db_id (UUID) if caller passed a code instead
+  async function loadCourseDetails(course: { id: string | number; code?: string; name?: string }) {
+    setCourseLoading(true);
+    setCourseResources([]);
+    setCourseAssignments([]);
+    setActiveCourseId(course.id);
+    setActiveCourseName(course.name ?? course.code ?? '');
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id;
+      if (!userId) throw new Error('Not authenticated');
+
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+
+      // Resolve course_db_id:
+      // If the provided course.id is a valid UUID present in courses.id -> use it.
+      // Otherwise, treat it as a course code and lookup the DB id.
+      let courseDbId = String(course.id);
+      try {
+        // quick check: does a course with this id exist?
+        const test = await supabase.from('courses').select('id, course_id, name').eq('id', courseDbId).single();
+        if (!test?.data) {
+          // try resolving by course_id (text code)
+          const byCode = await supabase.from('courses').select('id, course_id, name').eq('course_id', String(course.id)).single();
+          if (byCode?.data && byCode.data.id) {
+            courseDbId = byCode.data.id;
+            // also update activeCourseName if missing
+            if (!course.name && byCode.data.name) setActiveCourseName(byCode.data.name);
+          } else {
+            // course not found by id or code: bail out
+            throw new Error('Course not found');
+          }
+        } else {
+          // test.data exists -> ensure activeCourseName present
+          if (!course.name && test.data.name) setActiveCourseName(test.data.name);
+        }
+      } catch (resolveErr) {
+        console.error('Failed to resolve course DB id', resolveErr);
+        setCourseLoading(false);
+        setCourseResources([]);
+        setCourseAssignments([]);
+        return;
+      }
+
+      // fetch resources
+      try {
+        const rres = await fetch(`${API_BASE}/users/courses/resources/?course_db_id=${encodeURIComponent(String(courseDbId))}&user_id=${encodeURIComponent(String(userId))}`);
+        const rjson = await rres.json().catch(() => []);
+        if (rres.ok) setCourseResources(rjson || []);
+        else setCourseResources([]);
+      } catch (e) {
+        setCourseResources([]);
+      }
+
+      // fetch assignments for this course (student view).
+      // The backend now returns assignment.course and any submission by the requesting user.
+      try {
+        const ares = await fetch(`${API_BASE}/users/courses/assignments/?course_db_id=${encodeURIComponent(String(courseDbId))}&user_id=${encodeURIComponent(String(userId))}`);
+        const ajson = await ares.json().catch(() => []);
+        if (ares.ok) {
+          // Normalize assignments if needed (ensure course.code exists)
+          const normalized = (ajson || []).map((a: any) => {
+            if (a.course && !a.course.code) a.course.code = a.course.course_id || a.course.courseId || a.course.code;
+            return a;
+          });
+          setCourseAssignments(normalized);
+        } else {
+          setCourseAssignments([]);
+        }
+      } catch (e) {
+        setCourseAssignments([]);
+      }
+
+      setCourseModalOpen(true);
+    } catch (err: any) {
+      console.error('loadCourseDetails error', err);
+      setCourseResources([]);
+      setCourseAssignments([]);
+    } finally {
+      setCourseLoading(false);
+    }
+  }
+
+  // fetch enrolled courses on mount
+  useEffect(() => {
+    fetchEnrolledCourses();
+    // optionally re-fetch when assignments or profile summary changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const recentPosts = useMemo(() => (
+    groupedAssignments
+      .flatMap((g) => g.assignments.map((a) => ({ ...a, groupDate: g.date })))
+      .sort((x, y) => new Date(y.due_date).getTime() - new Date(x.due_date).getTime())
+      .slice(0, 3)
+  ), [groupedAssignments]);
+
+  const next7Days = Array.from({ length: 7 }).map((_, i) => {
+     const d = new Date();
+     d.setDate(d.getDate() + i);
+     return d;
+   });
+
+   const dateKey = (d: Date) => d.toISOString().slice(0, 10);
+  const assignmentsByDate = useMemo(() => {
+     const map = new Map<string, AssignmentWithCourse[]>();
+     groupedAssignments.forEach((g) => {
+       g.assignments.forEach((a) => {
+         const key = dateKey(new Date(a.due_date));
+         const arr = map.get(key) ?? [];
+         arr.push(a);
+         map.set(key, arr);
+       });
+     });
+     return map;
+   }, [groupedAssignments]);
+
+  function dayStatusFor(date: Date) {
+     const key = dateKey(date);
+     const list = assignmentsByDate.get(key) ?? [];
+     if (list.length === 0) return { label: 'No due', color: 'bg-gray-100 text-gray-600' };
+     if (list.some((a) => a.status === 'missing')) return { label: 'Due', color: 'bg-red-50 text-red-700' };
+     if (list.some((a) => a.status === 'submitted')) return { label: 'Submitted', color: 'bg-blue-50 text-blue-700' };
+     if (list.every((a) => a.status === 'graded')) return { label: 'Graded', color: 'bg-green-50 text-green-700' };
+     return { label: 'Due', color: 'bg-yellow-50 text-yellow-700' };
+   }
+
+   const QuickActionButtons = () => (
+     <>
+       <button onClick={() => navigate('/grades')} className="text-left px-3 py-2 border rounded-md">View grades</button>
+       <button onClick={() => setAssignmentsOpen(true)} className="text-left px-3 py-2 border rounded-md">Assignments</button>
+       <button onClick={() => navigate('/inbox')} className="text-left px-3 py-2 border rounded-md">Inbox</button>
+     </>
+   );
 
   const [assignmentsOpen, setAssignmentsOpen] = useState(false);
   const [assignmentsState, setAssignmentsState] = useState<AssignmentWithCourse[]>(() => groupedAssignments.flatMap((g) => g.assignments));
@@ -309,7 +471,8 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
     setTimeout(() => fileInputRef.current?.click(), 50);
   }
 
-  function handleFileChange(e: any) {
+  // handle file change: upload/submit assignment to backend (student)
+  async function handleFileChange(e: any) {
     const file = e.target.files?.[0];
     const id = pendingUploadFor;
     // clear the input so same-file re-uploads are possible later
@@ -326,14 +489,89 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
       return;
     }
 
-    // simulate upload
+    // try to submit to backend
     setUploading(true);
     setUploadError(null);
-    setTimeout(() => {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const studentId = sessionData?.session?.user?.id;
+      if (!studentId) throw new Error('Not authenticated');
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+
+      // NOTE: we don't handle file storage here. send a placeholder file_url = filename.
+      const body = {
+        student_id: studentId,
+        assignment_id: id,
+        file_url: file.name,
+      };
+      const res = await fetch(`${API_BASE}/users/courses/assignments/submit/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // fallback to local marking but show error
+        setUploadError(j?.error || `Submit failed: ${res.status}`);
+        // still mark locally so UI reflects the attempt
+        markAsSubmitted(id, file.name);
+      } else {
+        // success: update UI and refresh course assignments
+        markAsSubmitted(id, file.name);
+        // reload course details so students see updated submission state
+        if (activeCourseId) {
+          await loadCourseDetails({ id: activeCourseId, name: activeCourseName ?? undefined });
+        } else {
+          await fetchEnrolledCourses();
+        }
+      }
+    } catch (err: any) {
+      setUploadError(err?.message || String(err));
+      // still mark locally
       markAsSubmitted(id, file.name);
+    } finally {
       setUploading(false);
       setPendingUploadFor(null);
-    }, 700);
+    }
+  }
+
+  // inside join modal handler, replace the simulated flow with real POST
+  async function submitJoinRequest(code: string) {
+    setJoinLoading(true);
+    setJoinStatus(null);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const studentId = sessionData?.session?.user?.id;
+      if (!studentId) throw new Error('Not authenticated');
+
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+      const res = await fetch(`${API_BASE}/users/courses/join-request/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          student_id: studentId,
+          course_code: code,
+        }),
+      });
+
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // Map known backend errors to friendly messages
+        const errCode = (body && (body.error || '')).toString();
+        let friendly = body?.error || body?.details || `Request failed: ${res.status}`;
+        if (errCode.includes('course_not_found')) friendly = 'Course not found. Please check the code.';
+        if (errCode.includes('already_enrolled')) friendly = 'You are already enrolled in this course.';
+        if (errCode.includes('request_already_pending')) friendly = 'You already have a pending request for this course.';
+        setJoinStatus(`error: ${friendly}`);
+      } else {
+        // success - server created a join request
+        setJoinStatus('pending');
+      }
+    } catch (err: any) {
+      setJoinStatus(`error: ${err.message || String(err)}`);
+    } finally {
+      setJoinLoading(false);
+    }
   }
 
   return (
@@ -362,15 +600,35 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
           </div>
         </header>
 
-        {uploadError && (
-          <div className="fixed top-6 right-6 z-50 bg-red-50 text-red-700 border border-red-200 px-4 py-2 rounded flex items-center gap-3">
-            <div className="text-sm">{uploadError}</div>
-            <button onClick={() => setUploadError(null)} className="text-sm text-red-600 underline">Dismiss</button>
+        {/* Recently joined courses strip */}
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm text-slate-600 font-medium">Recently joined</h3>
+            <button onClick={() => navigate('/courses')} className="text-xs text-indigo-600 hover:underline">View all</button>
           </div>
-        )}
+          <div className="flex gap-3 overflow-x-auto pb-2">
+            {(joinedCourses && joinedCourses.length > 0) ? joinedCourses.slice(0, 6).map((c) => (
+              <div key={String(c.id)} className="min-w-[220px] bg-white rounded-lg p-3 shadow-sm flex-shrink-0">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800 truncate">{c.name ?? c.code ?? 'Course'}</div>
+                    <div className="text-xs text-slate-500 mt-1">{c.code ?? ''}</div>
+                  </div>
+                  <div className="text-xs text-indigo-600 font-medium">Joined</div>
+                </div>
+                <div className="mt-3 flex items-center justify-between">
+                  <button onClick={() => loadCourseDetails({ id: c.id, code: c.code, name: (c as any).name })} className="px-3 py-1 bg-indigo-600 text-white rounded-md text-sm">Open</button>
+                  <button onClick={() => navigate(`/courses/${c.id}`)} className="px-3 py-1 border rounded-md text-sm">Details</button>
+                </div>
+              </div>
+            )) : (
+              <div className="text-sm text-slate-500">No recently joined courses</div>
+            )}
+          </div>
+        </div>
 
         {/* Recent posts: latest assignment posts */}
-          <div className="mb-6">
+        <div className="mb-6">
           <h3 className="text-sm text-slate-600 font-medium mb-3">Recent posts</h3>
           <div className="flex flex-col sm:flex-row gap-3 items-stretch">
             {recentPosts.map((p) => (
@@ -491,7 +749,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
                 <div className="mt-2 flex flex-wrap gap-2">
                   {joinedCourses.length ? (
                     joinedCourses.map((c) => (
-                      <button key={c.id} onClick={() => navigate(`/courses/${c.id}`)} className={`px-3 py-1 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 ${c.color === 'purple' ? 'bg-violet-100 text-violet-700' : c.color === 'blue' ? 'bg-blue-100 text-blue-700' : c.color === 'gray' ? 'bg-gray-100 text-gray-700' : 'bg-slate-100 text-slate-700'}`}>
+                      <button key={c.id} onClick={() => loadCourseDetails({ id: c.id, code: c.code, name: (c as any).name })} className={`px-3 py-1 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 ${c.color === 'purple' ? 'bg-violet-100 text-violet-700' : c.color === 'blue' ? 'bg-blue-100 text-blue-700' : c.color === 'gray' ? 'bg-gray-100 text-gray-700' : 'bg-slate-100 text-slate-700'}`}>
                         {c.code}
                       </button>
                     ))
@@ -593,28 +851,101 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
             <div className="absolute inset-0 bg-black/40" onClick={() => setJoinModalOpen(false)} />
             <div className="relative bg-white rounded-lg shadow-lg w-full max-w-md p-6 z-50">
               {!joinStatus ? (
-                <form onSubmit={(e) => { e.preventDefault(); setJoinStatus('the instructor will accept the joining'); }}>
-                  <h3 className="text-lg font-semibold text-slate-800 mb-2">Join course</h3>
-                  <p className="text-sm text-slate-500 mb-4">Enter the course code provided by your instructor.</p>
-                  <input ref={joinInputRef} value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="Enter code" className="w-full border rounded px-3 py-2 mb-4" />
-                  <div className="flex items-center justify-end gap-2">
-                    <button type="button" onClick={() => setJoinModalOpen(false)} className="px-3 py-2 rounded-md border">Cancel</button>
-                    <button type="submit" disabled={!joinCode.trim()} className="px-3 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-60">Request join</button>
-                  </div>
-                </form>
-              ) : (
-                <div>
-                  <h3 className="text-lg font-semibold text-slate-800 mb-2">Request sent</h3>
-                  <p className="text-sm text-slate-500 mb-4">the instructor will accept the joining</p>
-                  <div className="flex justify-end">
-                    <button onClick={() => setJoinModalOpen(false)} className="px-3 py-2 rounded-md bg-indigo-600 text-white">Close</button>
-                  </div>
+                <form onSubmit={(e) => { e.preventDefault(); submitJoinRequest(joinCode); }}>
+                   <h3 className="text-lg font-semibold text-slate-800 mb-2">Join course</h3>
+                   <p className="text-sm text-slate-500 mb-4">Enter the course code provided by your instructor.</p>
+                   <input ref={joinInputRef} value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="Enter code" className="w-full border rounded px-3 py-2 mb-4" />
+                   <div className="flex items-center justify-end gap-2">
+                     <button type="button" onClick={() => setJoinModalOpen(false)} className="px-3 py-2 rounded-md border">Cancel</button>
+-                    <button type="submit" disabled={!joinCode.trim()} className="px-3 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-60">Request join</button>
++                    <button type="submit" disabled={!joinCode.trim() || joinLoading} className="px-3 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-60">
++                      {joinLoading ? 'Sending…' : 'Request join'}
++                    </button>
+                   </div>
+                 </form>
+               ) : (
+                 <div>
+                   <h3 className="text-lg font-semibold text-slate-800 mb-2">Request sent</h3>
+-                  <p className="text-sm text-slate-500 mb-4">{joinStatus === 'pending' ? 'Waiting for instructor approval.' : joinStatus}</p>
++                  <p className="text-sm text-slate-500 mb-4">
++                    {joinStatus === 'pending' ? 'Waiting for instructor approval.' : joinStatus}
++                  </p>
+                   <div className="flex justify-end">
+                     <button onClick={() => setJoinModalOpen(false)} className="px-3 py-2 rounded-md bg-indigo-600 text-white">Close</button>
+                   </div>
+                 </div>
+               )}
+             </div>
+           </div>
+         )}
+         {/* Course Details Modal (student view) */}
+         {courseModalOpen && (
+           <div className="fixed inset-0 z-60 flex items-center justify-center">
+             <div className="absolute inset-0 bg-black/40" onClick={() => setCourseModalOpen(false)} />
+             <div className="relative bg-white rounded-lg shadow-lg w-full max-w-3xl p-6 z-50">
+               <div className="flex items-center justify-between mb-4">
+                 <h3 className="text-lg font-semibold">{activeCourseName ?? 'Course'}</h3>
+                 <div>
+                  <button onClick={() => setCourseModalOpen(false)} className="px-3 py-1 text-sm rounded-md border">Close</button>
                 </div>
-              )}
+               </div>
+
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Resources</h4>
+                  {courseLoading ? (
+                    <div className="text-sm text-slate-500">Loading…</div>
+                  ) : courseResources.length === 0 ? (
+                    <div className="text-sm text-slate-500">No resources</div>
+                  ) : (
+                    <ul className="space-y-2">
+                      {courseResources.map((r: any) => (
+                        <li key={r.id} className="p-3 border rounded">
+                          <div className="text-sm font-semibold">{r.title || (r.type === 'video' ? 'Video' : 'Syllabus')}</div>
+                          {r.type === 'video' ? (
+                            <a href={r.video_url} target="_blank" rel="noreferrer" className="text-xs text-indigo-600 hover:underline">{r.video_url}</a>
+                          ) : (
+                            <div className="text-xs text-slate-600 mt-1 whitespace-pre-wrap">{r.content}</div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Assignments</h4>
+                  {courseLoading ? (
+                    <div className="text-sm text-slate-500">Loading…</div>
+                  ) : courseAssignments.length === 0 ? (
+                    <div className="text-sm text-slate-500">No assignments</div>
+                  ) : (
+                    <ul className="space-y-2">
+                      {courseAssignments.map((a: any) => (
+                        <li key={a.id} className="p-3 border rounded flex items-center justify-between">
+                          <div>
+                            <div className="text-sm font-medium">{a.title}</div>
+                            <div className="text-xs text-slate-500">{a.due_date ? new Date(a.due_date).toLocaleString() : 'No due date'}</div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {a.status === 'submitted' ? (
+                              <span className="text-sm text-slate-600">Submitted</span>
+                            ) : (
+                              <button onClick={() => handleInitiateUpload(a.id)} className="px-3 py-1 bg-indigo-600 text-white rounded text-sm">Submit</button>
+                            )}
+                            <button onClick={() => navigate(`/courses/${a.course_db_id ?? a.course?.id ?? ''}`)} className="px-3 py-1 border rounded text-sm">Go</button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}
-        {/* hidden file input for assignment submission (PDF only) - always present so clicks work from any modal */}
+
+        {/* hidden file input for assignment submission (PDF only) */}
         <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden" onChange={handleFileChange} />
       </div>
     </div>
