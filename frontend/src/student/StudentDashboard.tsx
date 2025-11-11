@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { ChevronRight, MoreVertical, User, Calendar, Clock, CheckCircle, XCircle } from 'lucide-react';
+import { ChevronRight, MoreVertical, User, Calendar, Clock, CheckCircle, XCircle, Sun, Moon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ChatBox from './ChatBot';
 import { supabase } from '../lib/supabase';
@@ -291,6 +291,65 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
     }
   };
 
+  // theme state: persisted to localStorage and applied globally
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => (typeof window !== 'undefined' && localStorage.getItem('theme') === 'dark') ? 'dark' : 'light');
+
+  useEffect(() => {
+    applyTheme(theme);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function applyTheme(t: 'light' | 'dark') {
+    try {
+      if (t === 'dark') {
+        document.documentElement.classList.add('dark');
+        injectDarkStyles();
+      } else {
+        document.documentElement.classList.remove('dark');
+        removeDarkStyles();
+      }
+      localStorage.setItem('theme', t);
+      setTheme(t);
+    } catch (e) {
+      // ignore in SSR/test
+    }
+  }
+
+  function toggleTheme() {
+    applyTheme(theme === 'dark' ? 'light' : 'dark');
+  }
+
+  function injectDarkStyles() {
+    if (document.getElementById('dark-theme-overrides')) return;
+    const css = `
+      :root { color-scheme: dark; }
+      body, .min-h-screen { background-color: #0b1220 !important; color: #e6eef8 !important; }
+      .bg-white { background-color: #0b1220 !important; }
+      .bg-gray-50 { background-color: #071025 !important; }
+      .text-slate-500, .text-slate-400 { color: #94a3b8 !important; }
+      .text-slate-600, .text-slate-700 { color: #cbd5e1 !important; }
+      .text-slate-800, .text-slate-900 { color: #e6eef8 !important; }
+      .border { border-color: rgba(255,255,255,0.06) !important; }
+      .shadow, .shadow-sm, .shadow-md, .shadow-lg { box-shadow: none !important; }
+      .bg-indigo-600 { background-color: #4f46e5 !important; }
+      .bg-red-600 { background-color: #ef4444 !important; }
+      .bg-green-50 { background-color: #052e1f !important; }
+      .bg-blue-50 { background-color: #071633 !important; }
+      a { color: #7dd3fc !important; }
+      input, textarea { background-color: #071025 !important; color: #e6eef8 !important; border-color: rgba(255,255,255,0.06) !important; }
+      .bg-gradient-to-b { background-image: linear-gradient(180deg,#071025,#071025) !important; }
+    `;
+    const s = document.createElement('style');
+    s.id = 'dark-theme-overrides';
+    s.innerHTML = css;
+    document.head.appendChild(s);
+  }
+
+  function removeDarkStyles() {
+    const el = document.getElementById('dark-theme-overrides');
+    if (el) el.remove();
+  }
+
   // lifecycle
   useEffect(() => {
     fetchAssignments();
@@ -332,7 +391,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white p-6">
+    <div className="min-h-screen p-6 bg-gradient-to-b from-gray-50 to-white">
       <div className="max-w-7xl mx-auto">
         <header className="flex items-center justify-between mb-6">
           <div>
@@ -341,6 +400,27 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
           </div>
 
           <div className="flex items-center gap-3 relative">
+            {/* Sun ↔ Moon toggle (single animated switch) */}
+            <button
+              onClick={toggleTheme}
+              role="switch"
+              aria-checked={theme === 'dark'}
+              aria-label="Toggle theme"
+              className={`relative inline-flex items-center w-14 h-8 rounded-full p-1 transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-indigo-300 ${theme === 'dark' ? 'bg-indigo-600' : 'bg-gray-200'}`}
+            >
+              <span className="sr-only">Toggle theme</span>
+              {/* Sun icon (light) */}
+              <span className={`absolute left-2 top-1 transform transition-all duration-400 ${theme === 'dark' ? 'opacity-0 -translate-x-1 scale-90' : 'opacity-100 translate-x-0 scale-100'}`}>
+                <Sun size={14} className="text-yellow-400" />
+              </span>
+              {/* Moon icon (dark) */}
+              <span className={`absolute right-2 top-1 transform transition-all duration-400 ${theme === 'dark' ? 'opacity-100 translate-x-0 scale-100' : 'opacity-0 translate-x-1 scale-90'}`}>
+                <Moon size={14} className="text-white" />
+              </span>
+              {/* Knob */}
+              <span className={`relative z-10 block w-6 h-6 bg-white rounded-full shadow transform transition-transform duration-300 ${theme === 'dark' ? 'translate-x-6 rotate-6' : 'translate-x-0 rotate-0'}`} />
+            </button>
+
             <button onClick={onLogout} className="px-4 py-2 bg-red-600 text-white rounded">Logout</button>
             <button onClick={() => setMenuOpen(v => !v)} className="h-10 w-10 bg-white rounded flex items-center justify-center"><MoreVertical size={18} /></button>
             {menuOpen && (
