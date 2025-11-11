@@ -44,29 +44,9 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
   const [activeView, setActiveView] = useState('dashboard');
 
   useEffect(() => {
-    let channel: any | null = null;
     fetchAssignments();
     fetchProfileSummary();
-
-    try {
-      channel = (window as any).supabaseClient?.channel
-        ? (window as any).supabaseClient
-            .channel('public:assignments')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'assignments' }, () => {
-              fetchAssignments();
-              fetchProfileSummary();
-            })
-            .subscribe()
-        : null;
-    } catch (_err) {
-      // ignore realtime subscription errors
-    }
-
-    return () => {
-      if (channel && (window as any).supabaseClient) {
-        (window as any).supabaseClient.removeChannel(channel);
-      }
-    };
+    // Optionally, add realtime subscription logic here if needed
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -246,11 +226,11 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
   }
 
   const QuickActionButtons = () => (
-    <>
+    <div className="flex flex-col gap-2">
       <button type="button" onClick={() => setActiveView('courses')} className="text-left px-3 py-2 border rounded-md">My courses</button>
       <button type="button" onClick={() => setActiveView('create')} className="text-left px-3 py-2 border rounded-md">Create course</button>
       <button onClick={() => navigate('/inbox')} className="text-left px-3 py-2 border rounded-md">Inbox</button>
-    </>
+    </div>
   );
 
   const assignmentsOpen = false; // Instructor quick-view modal can be added later if needed

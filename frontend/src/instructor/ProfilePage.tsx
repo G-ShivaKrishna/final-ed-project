@@ -10,6 +10,7 @@ export default function InstructorProfilePage(): JSX.Element {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<any>({});
   const [saving, setSaving] = useState(false);
+  const [coursesCount, setCoursesCount] = useState<number | null>(null);
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -33,6 +34,17 @@ export default function InstructorProfilePage(): JSX.Element {
         };
         setProfile(normalized);
         setDraft(normalized);
+      }
+
+      // Fetch courses count for instructor
+      const { data: courses, error: coursesErr } = await supabase
+        .from('courses')
+        .select('id')
+        .eq('instructor_id', userId);
+      if (!coursesErr && Array.isArray(courses)) {
+        setCoursesCount(courses.length);
+      } else {
+        setCoursesCount(null);
       }
     };
 
@@ -164,7 +176,7 @@ export default function InstructorProfilePage(): JSX.Element {
           <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="p-4 bg-gray-50 rounded">
               <div className="text-xs text-slate-500">Courses</div>
-              <div className="text-lg font-semibold">—</div>
+              <div className="text-lg font-semibold">{coursesCount !== null ? coursesCount : '—'}</div>
             </div>
             <div className="p-4 bg-gray-50 rounded">
               <div className="text-xs text-slate-500">Assignments</div>
