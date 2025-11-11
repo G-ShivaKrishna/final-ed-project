@@ -199,25 +199,31 @@ def create_user_record(request):
 
 @api_view(['GET'])
 def get_user_profile(request):
-	"""Fetch a user profile from Supabase `users` table by user_id query param.
+    """Fetch a user profile from Supabase `users` table by user_id query param.
 
-	Returns id, email, username, role, created_at, College, phone_number, major
-	"""
-	user_id = request.GET.get('user_id')
-	if not user_id:
-		return Response({"error": "user_id query parameter is required"}, status=400)
+    Returns id, email, username, role, created_at, College, phone_number, major
+    """
+    user_id = request.GET.get('user_id')
+    if not user_id:
+        return Response({"error": "user_id query parameter is required"}, status=400)
 
-	try:
-		# Select the case-sensitive "College" column explicitly
-		resp = supabase.table('users').select('id, email, username, role, created_at, "College", phone_number, major').eq('id', user_id).execute()
-		if getattr(resp, 'error', None):
-			return Response({"error": str(resp.error)}, status=500)
-		row = _single_from_resp(resp)
-		if not row:
-			return Response({"error": "not_found"}, status=404)
-		return Response(row)
-	except Exception as e:
-		return Response({"error": str(e)}, status=500)
+    try:
+        # Select the case-sensitive "College" column explicitly
+        resp = supabase.table('users').select('id, email, username, role, created_at, "College", phone_number, major').eq('id', user_id).execute()
+        # If not found, try by email (for legacy/test users)
+        row = _single_from_resp(resp)
+        if not row:
+            # Try by email if user_id looks like an email
+            if "@" in user_id:
+                resp2 = supabase.table('users').select('id, email, username, role, created_at, "College", phone_number, major').eq('email', user_id).execute()
+                row = _single_from_resp(resp2)
+                if not row:
+                    return Response({"error": "not_found"}, status=404)
+                return Response(row)
+            return Response({"error": "not_found"}, status=404)
+        return Response(row)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
 
 
 @api_view(['PUT', 'PATCH'])

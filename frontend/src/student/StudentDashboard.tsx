@@ -39,6 +39,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
   const [courseResources, setCourseResources] = useState<any[]>([]);
   const [courseAssignments, setCourseAssignments] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [courseLoading, setCourseLoading] = useState(false);
 
   // file upload state for submissions
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -161,6 +162,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
 
   // resolve course id and load resources + assignments
   async function loadCourseDetails(course: { id: string | number; code?: string; name?: string }) {
+    setCourseModalOpen(true); // Ensure modal is open before loading details
     setCourseLoading(true);
     setCourseResources([]);
     setCourseAssignments([]);
@@ -383,11 +385,11 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
   }, [groupedFlat]);
 
   const QuickActionButtons = () => (
-    <>
+    <div className="flex flex-col gap-2">
       <button onClick={() => navigate('/grades')} className="text-left px-3 py-2 border rounded-md">View grades</button>
       <button onClick={() => setCourseModalOpen(true)} className="text-left px-3 py-2 border rounded-md">Courses</button>
       <button onClick={() => navigate('/inbox')} className="text-left px-3 py-2 border rounded-md">Inbox</button>
-    </>
+    </div>
   );
 
   return (
@@ -528,7 +530,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
                       <div className="mt-1">
                         {count === 0 ? <div className="inline-block w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-[10px] text-gray-600">No due</div> :
                           <div className="flex flex-col items-center">
-                            <div className="flex gap-1">{statuses.slice(0,3).map(s => <span key={s} className={`w-2 h-2 rounded-full ${statusToColor(s)}`} />)}</div>
+                            <div className="flex gap-1">{statuses.slice(0,3).map((s, i) => <span key={s + '-' + i} className={`w-2 h-2 rounded-full ${statusToColor(s)}`} />)}</div>
                             <div className="text-[10px] font-semibold">{count} due</div>
                           </div>}
                       </div>
@@ -542,55 +544,122 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
 
         <div className="mt-8"><ChatBox /></div>
 
-        {/* Course modal (student view) */}
+        {/* Course modal (student view) - if no activeCourseId show joined courses list, otherwise show details */}
         {courseModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="absolute inset-0 bg-black/40" onClick={() => setCourseModalOpen(false)} />
+            <div className="absolute inset-0 bg-black/40" onClick={() => { setCourseModalOpen(false); setActiveCourseId(null); }} />
             <div className="relative bg-white rounded-lg w-full max-w-3xl p-6 z-50 overflow-auto max-h-[80vh]">
+              {/* header */}
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h3 className="text-lg font-semibold">{activeCourseName}</h3>
+                  <h3 className="text-lg font-semibold">
+                    {activeCourseId ? (activeCourseName ?? 'Course') : 'My courses'}
+                  </h3>
+                  {!activeCourseId && <div className="text-sm text-slate-500">Courses you have joined</div>}
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => setCourseModalOpen(false)} className="px-3 py-1 border rounded">Close</button>
+                  {activeCourseId ? (
+                    <button onClick={() => { setActiveCourseId(null); setActiveCourseName(null); setCourseAssignments([]); setCourseResources([]); }} className="px-3 py-1 border rounded">Back to courses</button>
+                  ) : (
+                    <button onClick={() => { setJoinModalOpen(true); }} className="px-3 py-1 bg-indigo-600 text-white rounded">Join course</button>
+                  )}
+                  <button onClick={() => { setCourseModalOpen(false); setActiveCourseId(null); }} className="px-3 py-1 border rounded">Close</button>
                 </div>
               </div>
 
-              <div className="space-y-4">
-                <div>
-                  <h4 className="text-sm mb-2">Resources</h4>
-                  {courseResources.length === 0 ? <div className="text-sm text-slate-500">No resources</div> :
-                    <ul className="space-y-2">{courseResources.map(r => (
-                      <li key={r.id} className="p-3 border rounded flex items-center justify-between">
-                        <div>
-                          <div className="font-medium">{r.title}</div>
-                          <div className="text-xs text-slate-500">{r.type}{r.video_url ? ` • ${r.video_url}` : ''}</div>
-                        </div>
-                        <a href={r.content?.match?.(/https?:\/\/\S+/)?.[0] ?? r.video_url ?? '#'} target="_blank" rel="noreferrer" className="text-indigo-600">Download</a>
-                      </li>
-                    ))}</ul>}
+              {/* body */}
+              {!activeCourseId ? (
+                <div className="flex flex-col gap-4">
+                  {joinedCourses.length === 0 ? (
+                    <div className="text-sm text-slate-500">You haven't joined any courses yet. Use "Join course" to request access.</div>
+                  ) : (
+                    <ul className="flex flex-col gap-4">
+                      {joinedCourses.map((c) => (
+                        <li
+                          key={String(c.id)}
+                          className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between border rounded p-4 bg-white shadow-sm"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-lg">{c.name ?? c.code}</div>
+                            <div className="text-xs text-slate-500 mt-1">{c.code}</div>
+                          </div>
+                          <div className="flex flex-col gap-2 mt-3 sm:mt-0 sm:flex-row">
+                            <button
+                              type="button"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                // Always reset activeCourseId before loading to force modal state update
+                                setActiveCourseId(null);
+                                setActiveCourseName(null);
+                                setCourseAssignments([]);
+                                setCourseResources([]);
+                                // Wait for state to flush, then load details
+                                setTimeout(() => {
+                                  loadCourseDetails(c);
+                                }, 0);
+                              }}
+                              className="px-4 py-2 bg-indigo-600 text-white rounded font-semibold"
+                            >
+                              Open
+                            </button>
+                            <button
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                if (c.code) {
+                                  navigator.clipboard?.writeText(String(c.code));
+                                }
+                              }}
+                              className="px-4 py-2 border rounded text-sm"
+                            >
+                              Copy code
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="mt-4 flex justify-end gap-2">
+                    <button onClick={() => navigate('/courses')} className="px-3 py-1 border rounded">Explore courses</button>
+                  </div>
                 </div>
-
-                <div>
-                  <h4 className="text-sm mb-2">Assignments</h4>
-                  {courseAssignments.length === 0 ? <div className="text-sm text-slate-500">No assignments</div> :
-                    <ul className="space-y-2">{courseAssignments.map((a:any) => (
-                      <li key={a.id} className="p-3 border rounded">
-                        <div className="flex items-center justify-between">
+              ) : (
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-sm mb-2">Resources</h4>
+                    {courseResources.length === 0 ? <div className="text-sm text-slate-500">No resources</div> :
+                      <ul className="space-y-2">{courseResources.map(r => (
+                        <li key={r.id} className="p-3 border rounded flex items-center justify-between">
                           <div>
-                            <div className="font-medium">{a.title}</div>
-                            <div className="text-xs text-slate-500">{a.due_date ? new Date(a.due_date).toLocaleString() : 'No due date'}</div>
-                            {a.description && <div className="text-xs mt-1">{String(a.description).split(/https?:\/\//)[0]}</div>}
+                            <div className="font-medium">{r.title}</div>
+                            <div className="text-xs text-slate-500">{r.type}{r.video_url ? ` • ${r.video_url}` : ''}</div>
                           </div>
-                          <div className="flex flex-col items-end gap-2">
-                            <div className={`px-2 py-1 rounded-full text-xs border ${statusColor(a.status)}`}>{a.status}</div>
-                            {a.status !== 'graded' && <button onClick={() => handleInitiateUpload(a.id, activeCourseId ?? a.course?.id)} className="px-2 py-1 bg-indigo-600 text-white rounded text-xs">Submit</button>}
+                          <a href={r.content?.match?.(/https?:\/\/\S+/)?.[0] ?? r.video_url ?? '#'} target="_blank" rel="noreferrer" className="text-indigo-600">Download</a>
+                        </li>
+                      ))}</ul>}
+                  </div>
+
+                  <div>
+                    <h4 className="text-sm mb-2">Assignments</h4>
+                    {courseAssignments.length === 0 ? <div className="text-sm text-slate-500">No assignments</div> :
+                      <ul className="space-y-2">{courseAssignments.map((a:any) => (
+                        <li key={a.id} className="p-3 border rounded">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className="font-medium">{a.title}</div>
+                              <div className="text-xs text-slate-500">{a.due_date ? new Date(a.due_date).toLocaleString() : 'No due date'}</div>
+                              {a.description && <div className="text-xs mt-1">{String(a.description).split(/https?:\/\//)[0]}</div>}
+                            </div>
+                            <div className="flex flex-col items-end gap-2">
+                              <div className={`px-2 py-1 rounded-full text-xs border ${statusColor(a.status)}`}>{a.status}</div>
+                              {a.status !== 'graded' && <button onClick={() => handleInitiateUpload(a.id, activeCourseId ?? a.course?.id)} className="px-2 py-1 bg-indigo-600 text-white rounded text-xs">Submit</button>}
+                            </div>
                           </div>
-                        </div>
-                      </li>
-                    ))}</ul>}
+                        </li>
+                      ))}</ul>}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
         )}
