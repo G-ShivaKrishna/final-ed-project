@@ -32,6 +32,10 @@ export default function CoursesList(): JSX.Element {
   const [addResOpen, setAddResOpen] = useState(false);
   const [assignForm, setAssignForm] = useState({ title: '', description: '', due_date: '', points: '' });
   const [resForm, setResForm] = useState({ type: 'syllabus' as 'syllabus' | 'video', title: '', content: '', video_url: '' });
+  // resource edit state
+  const [editResOpen, setEditResOpen] = useState(false);
+  const [editingResource, setEditingResource] = useState<any | null>(null);
+  const [editResForm, setEditResForm] = useState({ title: '', content: '', video_url: '', type: 'syllabus' as 'syllabus' | 'video' });
 
   const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
   const navigate = useNavigate();
@@ -144,8 +148,22 @@ export default function CoursesList(): JSX.Element {
       try {
         const ares = await fetch(`${API_BASE}/users/courses/assignments/?course_db_id=${encodeURIComponent(course.id)}&user_id=${encodeURIComponent(instructorId)}`);
         const ajson = await ares.json().catch(() => []);
-        if (ares.ok) setAssignments(ajson || []);
-        else setAssignments([]);
+        if (ares.ok) {
+          // normalize incoming assignment rows: ensure due_date is ISO and course.code exists
+          const normalized = (ajson || []).map((a: any) => {
+            if (a.course && !a.course.code) a.course.code = a.course.course_id || a.course.courseId || a.course.code;
+            if (a.due_date) {
+              try {
+                // convert to canonical ISO so datetime-local and calendar logic behave consistently
+                a.due_date = new Date(a.due_date).toISOString();
+              } catch (_) {
+                // leave as-is if parsing fails
+              }
+            }
+            return a;
+          });
+          setAssignments(normalized);
+        } else setAssignments([]);
       } catch {
         setAssignments([]);
       }
@@ -244,6 +262,38 @@ export default function CoursesList(): JSX.Element {
       if (!res.ok) throw new Error(body?.error || `Failed to ${action}`);
       // refresh list
       if (selectedCourse) await openCourseModal(selectedCourse);
+    } catch (err: any) {
+      setError(err?.message || String(err));
+    }
+  }
+
+  // update resource (edit modal)
+  async function updateResource() {
+    if (!editingResource) return;
+    setError(null);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const instructorId = sessionData?.session?.user?.id;
+      if (!instructorId) throw new Error('Not authenticated');
+      const payload: any = {
+        instructor_id: instructorId,
+        resource_id: editingResource.id,
+        title: editResForm.title,
+        type: editResForm.type,
+      };
+      if (editResForm.type === 'syllabus') payload.content = editResForm.content;
+      else payload.video_url = editResForm.video_url;
+      const res = await fetch(`${API_BASE}/users/courses/resources/update/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Update failed: ${res.status}`);
+      // refresh modal data
+      if (selectedCourse) await openCourseModal(selectedCourse);
+      setEditResOpen(false);
+      setEditingResource(null);
     } catch (err: any) {
       setError(err?.message || String(err));
     }
@@ -351,7 +401,14 @@ export default function CoursesList(): JSX.Element {
                         <div className="text-sm font-medium">{r.title || (r.type === 'video' ? 'Video' : 'Syllabus')}</div>
                         <div className="text-xs text-slate-500">{r.type}{r.video_url ? ` • ${r.video_url}` : ''}</div>
                       </div>
-                      <div className="text-xs text-slate-400">{r.created_at ? new Date(r.created_at).toLocaleDateString() : ''}</div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-xs text-slate-400">{r.created_at ? new Date(r.created_at).toLocaleDateString() : ''}</div>
+                        <button onClick={() => {
+                          setEditingResource(r);
+                          setEditResForm({ title: r.title ?? '', content: r.content ?? '', video_url: r.video_url ?? '', type: r.type ?? 'syllabus' });
+                          setEditResOpen(true);
+                        }} className="text-sm px-3 py-1 border rounded-md">Edit</button>
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -464,6 +521,61 @@ export default function CoursesList(): JSX.Element {
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => setAddResOpen(false)} className="px-3 py-1 border rounded">Cancel</button>
               <button onClick={addResource} className="px-3 py-1 bg-indigo-600 text-white rounded">Add</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Resource Modal */}
+      {editResOpen && editingResource && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40 z-40" onClick={() => setEditResOpen(false)} />
+          <div className="relative bg-white rounded-lg shadow-lg w-full max-w-md p-6 z-50">
+            <h3 className="text-lg font-semibold mb-3">Edit resource</h3>
+            <div className="space-y-2">
+              <select value={editResForm.type} onChange={(e) => setEditResForm((s) => ({ ...s, type: e.target.value as any }))} className="w-full border px-2 py-1 rounded">
+                <option value="syllabus">Syllabus / Notes</option>
+                <option value="video">YouTube video</option>
+              </select>
+              <input value={editResForm.title} onChange={(e) => setEditResForm((s) => ({ ...s, title: e.target.value }))} placeholder="Title" className="w-full border px-2 py-1 rounded" />
+              {editResForm.type === 'syllabus' ? (
+                <textarea value={editResForm.content} onChange={(e) => setEditResForm((s) => ({ ...s, content: e.target.value }))} placeholder="Syllabus text" className="w-full border px-2 py-2 rounded h-28" />
+              ) : (
+                <input value={editResForm.video_url} onChange={(e) => setEditResForm((s) => ({ ...s, video_url: e.target.value }))} placeholder="YouTube URL" className="w-full border px-2 py-1 rounded" />
+              )}
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setEditResOpen(false)} className="px-3 py-1 border rounded">Cancel</button>
+              <button onClick={async () => {
+                // submit update
+                try {
+                  setError(null);
+                  const { data: sessionData } = await supabase.auth.getSession();
+                  const instructorId = sessionData?.session?.user?.id;
+                  if (!instructorId) throw new Error('Not authenticated');
+                  const payload: any = {
+                    instructor_id: instructorId,
+                    resource_id: editingResource.id,
+                    title: editResForm.title,
+                    type: editResForm.type,
+                  };
+                  if (editResForm.type === 'syllabus') payload.content = editResForm.content;
+                  else payload.video_url = editResForm.video_url;
+                  const res = await fetch(`${API_BASE}/users/courses/resources/update/`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                  });
+                  const body = await res.json().catch(() => ({}));
+                  if (!res.ok) throw new Error(body?.error || `Update failed: ${res.status}`);
+                  // refresh modal data
+                  if (selectedCourse) await openCourseModal(selectedCourse);
+                  setEditResOpen(false);
+                  setEditingResource(null);
+                } catch (err: any) {
+                  setError(err?.message || String(err));
+                }
+              }} className="px-3 py-1 bg-indigo-600 text-white rounded">Save changes</button>
             </div>
           </div>
         </div>

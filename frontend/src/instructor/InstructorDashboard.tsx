@@ -114,8 +114,17 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
       }
 
       const json = await res.json();
-      const assignments: AssignmentWithCourse[] = json.assignments || [];
-      if (assignments) {
+      const rawAssignments: AssignmentWithCourse[] = json.assignments || [];
+      if (rawAssignments) {
+        // normalize due_date -> ISO and ensure course.code exists
+        const assignments = rawAssignments.map((a) => {
+          try {
+            if (a.due_date) a.due_date = new Date(a.due_date).toISOString();
+          } catch (_) { /* leave as-is */ }
+          if (a.course && !a.course.code) a.course.code = a.course.course_id || a.course.courseId || a.course.code;
+          return a;
+        });
+
         const grouped = assignments.reduce((acc: Record<string, AssignmentWithCourse[]>, a: AssignmentWithCourse) => {
           const date = new Date(a.due_date);
           const dateStr = date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
@@ -393,12 +402,38 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                   <h4 className="text-sm font-medium text-slate-700 mb-3">Calendar</h4>
                   <div className="mt-2 grid grid-cols-7 gap-2 text-center text-xs">
                     {next7Days.map((d) => {
-                      const st = dayStatusFor(d);
+                      const key = dateKey(d);
+                      const list = assignmentsByDate.get(key) ?? [];
+                      const count = list.length;
+                      const statuses = Array.from(new Set(list.map((a) => a.status)));
+                      const statusToColor = (s: string) =>
+                        s === 'missing' ? 'bg-red-500' :
+                        s === 'submitted' ? 'bg-blue-500' :
+                        s === 'graded' ? 'bg-green-500' :
+                        'bg-yellow-400';
+                      const aria = count === 0
+                        ? `No due assignments on ${d.toLocaleDateString()}`
+                        : `${count} assignment${count > 1 ? 's' : ''} on ${d.toLocaleDateString()}: ${statuses.join(', ')}`;
+
                       return (
-                        <div key={d.toISOString()} className="p-2 rounded-md">
+                        <div key={d.toISOString()} className="p-2 rounded-md" aria-label={aria} title={aria}>
                           <div className="text-[10px] text-slate-500">{d.toLocaleDateString(undefined, { weekday: 'short' })}</div>
                           <div className="text-sm font-semibold text-slate-800">{d.getDate()}</div>
-                          <div className={`mt-1 inline-block px-2 py-0.5 rounded-full text-[10px] ${st.color}`}>{st.label}</div>
+
+                          <div className="mt-1">
+                            {count === 0 ? (
+                              <div className="inline-block w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-[10px] text-gray-600">No due</div>
+                            ) : (
+                              <div className="flex flex-col items-center gap-1">
+                                <div className="flex items-center gap-1">
+                                  {statuses.slice(0, 4).map((s) => (
+                                    <span key={s} className={`w-2 h-2 rounded-full ${statusToColor(s)}`} />
+                                  ))}
+                                </div>
+                                <div className="text-[10px] font-semibold text-slate-700">{count} due</div>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     })}

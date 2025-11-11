@@ -17,9 +17,11 @@ urlpatterns = [
     path('courses/delete/', views.delete_course, name='delete_course'),
     # assignments & submissions
     path('courses/assignments/create/', views.create_assignment, name='create_assignment'),
+    path('courses/assignments/update/', views.update_assignment, name='update_assignment'),
     path('courses/assignments/', views.list_course_assignments, name='list_course_assignments'),
     path('courses/assignments/submit/', views.submit_assignment, name='submit_assignment'),
     path('courses/submissions/grade/', views.grade_submission, name='grade_submission'),
+    path('courses/resources/update/', views.update_course_resource, name='update_course_resource'),
     # course resources (syllabus / videos)
     path('courses/resources/add/', views.add_course_resource, name='add_course_resource'),
     path('courses/resources/', views.list_course_resources, name='list_course_resources'),

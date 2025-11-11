@@ -963,3 +963,103 @@ def create_assignment(request):
         return Response(inserted, status=201)
     except Exception as e:
         return Response({"error": str(e)}, status=500)
+
+
+@api_view(['POST'])
+def update_assignment(request):
+    """
+    Instructor updates an assignment.
+    Body JSON: { instructor_id, assignment_id, title?, description?, due_date?, points? }
+    Returns updated assignment row.
+    """
+    data = request.data
+    instructor_id = data.get('instructor_id')
+    assignment_id = data.get('assignment_id')
+    if not instructor_id or not assignment_id:
+        return Response({"error": "instructor_id and assignment_id are required"}, status=400)
+
+    try:
+        # fetch assignment to determine course_db_id
+        ass_resp = supabase.table('assignments').select('id, course_db_id').eq('id', assignment_id).execute()
+        if getattr(ass_resp, 'error', None):
+            return Response({"error": str(ass_resp.error)}, status=500)
+        assignment = _single_from_resp(ass_resp)
+        if not assignment:
+            return Response({"error": "assignment_not_found"}, status=404)
+
+        # verify instructor owns the course
+        course_resp = supabase.table('courses').select('id, instructor_id').eq('id', assignment.get('course_db_id')).execute()
+        if getattr(course_resp, 'error', None):
+            return Response({"error": str(course_resp.error)}, status=500)
+        course = _single_from_resp(course_resp)
+        if not course:
+            return Response({"error": "course_not_found"}, status=404)
+        if str(course.get('instructor_id')) != str(instructor_id):
+            return Response({"error": "forbidden"}, status=403)
+
+        # prepare update payload (only allow specific fields)
+        allowed = {}
+        for k in ('title', 'description', 'due_date', 'points'):
+            if k in data:
+                allowed[k] = data.get(k)
+
+        if not allowed:
+            return Response({"error": "no_updatable_fields_provided"}, status=400)
+
+        upd = supabase.table('assignments').update(allowed).eq('id', assignment_id).execute()
+        if getattr(upd, 'error', None):
+            return Response({"error": str(upd.error)}, status=500)
+        updated = _single_from_resp(upd)
+        return Response(updated, status=200)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(['POST'])
+def update_course_resource(request):
+    """
+    Instructor updates a course resource (syllabus / video).
+    Body JSON: { instructor_id, resource_id, title?, content?, video_url?, type? }
+    Returns updated resource row.
+    """
+    data = request.data
+    instructor_id = data.get('instructor_id')
+    resource_id = data.get('resource_id')
+    if not instructor_id or not resource_id:
+        return Response({"error": "instructor_id and resource_id are required"}, status=400)
+
+    try:
+        # fetch resource to determine course_db_id
+        res_resp = supabase.table('course_resources').select('id, course_db_id, created_by').eq('id', resource_id).execute()
+        if getattr(res_resp, 'error', None):
+            return Response({"error": str(res_resp.error)}, status=500)
+        resource = _single_from_resp(res_resp)
+        if not resource:
+            return Response({"error": "resource_not_found"}, status=404)
+
+        # verify instructor owns the course (or created the resource)
+        course_resp = supabase.table('courses').select('id, instructor_id').eq('id', resource.get('course_db_id')).execute()
+        if getattr(course_resp, 'error', None):
+            return Response({"error": str(course_resp.error)}, status=500)
+        course = _single_from_resp(course_resp)
+        if not course:
+            return Response({"error": "course_not_found"}, status=404)
+        if str(course.get('instructor_id')) != str(instructor_id):
+            return Response({"error": "forbidden"}, status=403)
+
+        # prepare allowed update payload
+        allowed = {}
+        for k in ('title', 'content', 'video_url', 'type'):
+            if k in data:
+                allowed[k] = data.get(k)
+
+        if not allowed:
+            return Response({"error": "no_updatable_fields_provided"}, status=400)
+
+        upd = supabase.table('course_resources').update(allowed).eq('id', resource_id).execute()
+        if getattr(upd, 'error', None):
+            return Response({"error": str(upd.error)}, status=500)
+        updated = _single_from_resp(upd)
+        return Response(updated, status=200)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
