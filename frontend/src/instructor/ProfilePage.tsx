@@ -102,7 +102,7 @@ export default function InstructorProfilePage(): JSX.Element {
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center gap-4 mb-6">
           <div className="flex items-center gap-2">
-            <button onClick={() => navigate('/instructor-dashboard')} className="w-10 h-10 rounded-md bg-slate-100 flex items-center justify-center">
+            <button onClick={() => navigate(-1)} className="w-10 h-10 rounded-md bg-slate-100 flex items-center justify-center">
               <ChevronLeft size={18} />
             </button>
             <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-2 rounded-md bg-slate-100">Dashboard</button>

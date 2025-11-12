@@ -29,7 +29,7 @@ export default function Profile(): JSX.Element {
   return (
     <div>
       <div className="flex items-center gap-2 mb-4">
-        <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-1 border rounded-md">Back</button>
+        <button onClick={() => navigate(-1)} className="px-3 py-1 border rounded-md">Back</button>
         <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-1 border rounded-md">Dashboard</button>
       </div>
       <h2>Profile</h2>

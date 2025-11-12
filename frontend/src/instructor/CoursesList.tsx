@@ -49,6 +49,14 @@ export default function CoursesList(): JSX.Element {
   const resFileRef = useRef<HTMLInputElement | null>(null);
   const [uploadingFile, setUploadingFile] = useState(false);
 
+  // grading state
+  const [gradeModalOpen, setGradeModalOpen] = useState(false);
+  const [gradingSubmission, setGradingSubmission] = useState<any | null>(null);
+  const [gradeValue, setGradeValue] = useState<number | ''>('');
+  const [gradeFeedback, setGradeFeedback] = useState<string>('');
+  const [gradingLoading, setGradingLoading] = useState(false);
+  const [gradingError, setGradingError] = useState<string | null>(null);
+
   // helper: upload a file to Supabase storage 'assignments' bucket and return public URL (best-effort)
   async function uploadAssignmentFile(file: File, courseId: string) {
     if (!file) return '';
@@ -365,6 +373,59 @@ export default function CoursesList(): JSX.Element {
     }
   }
 
+  function openGradeModal(sub: any) {
+    setGradingSubmission(sub);
+    setGradeValue(sub.grade ?? '');
+    setGradeFeedback(sub.feedback ?? '');
+    setGradingError(null);
+    setGradeModalOpen(true);
+  }
+
+  function closeGradeModal() {
+    setGradeModalOpen(false);
+    setGradingSubmission(null);
+    setGradeValue('');
+    setGradeFeedback('');
+    setGradingError(null);
+  }
+
+  async function submitGrade() {
+    if (!gradingSubmission || (!Number.isFinite(Number(gradeValue)) && gradeValue !== '')) {
+      setGradingError('Please enter a numeric grade.');
+      return;
+    }
+    setGradingLoading(true);
+    setGradingError(null);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const graderId = sessionData?.session?.user?.id;
+      if (!graderId) throw new Error('Not authenticated');
+
+      const payload = {
+        grader_id: graderId,
+        submission_id: gradingSubmission.id,
+        grade: Number(gradeValue),
+        feedback: gradeFeedback || null,
+      };
+
+      const res = await fetch(`${API_BASE}/users/courses/submissions/grade/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Failed: ${res.status}`);
+
+      // refresh modal data
+      if (selectedCourse) await openCourseModal(selectedCourse);
+      closeGradeModal();
+    } catch (err: any) {
+      setGradingError(err?.message || String(err));
+    } finally {
+      setGradingLoading(false);
+    }
+  }
+
   if (loading) return <div className="bg-white rounded-xl p-6 shadow-sm text-center">Loading courses...</div>;
   if (error) return <div className="bg-red-50 rounded-xl p-4 text-red-700">{error}</div>;
   if (!courses || courses.length === 0) {
@@ -380,7 +441,7 @@ export default function CoursesList(): JSX.Element {
     <div className="bg-white rounded-xl p-6 shadow-sm">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-1 border rounded-md">Back</button>
+          <button onClick={() => navigate(-1)} className="px-3 py-1 border rounded-md">Back</button>
           <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-1 border rounded-md">Dashboard</button>
           <h3 className="text-lg font-medium text-slate-800 ml-3">My courses</h3>
         </div>
@@ -418,7 +479,7 @@ export default function CoursesList(): JSX.Element {
                 <div className="text-xs text-slate-500 mt-1">Instructor: {instructorEmail ?? '—'}</div>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-2 border rounded-md">Back</button>
+                <button onClick={() => navigate(-1)} className="px-3 py-2 border rounded-md">Back</button>
                 <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-2 border rounded-md">Dashboard</button>
                 <button onClick={() => { setSelectedCourse(null); setRequests(null); setStudents(null); }} className="px-3 py-2 border rounded-md">Close</button>
                 <button onClick={() => { /* optional: navigate to full course editor route later */ }} className="px-3 py-2 bg-indigo-600 text-white rounded-md">Open editor</button>
@@ -454,7 +515,25 @@ export default function CoursesList(): JSX.Element {
                       {/* render submissions for this assignment (if any) */}
                       <div className="mt-3">
                         <h5 className="text-xs text-slate-500 mb-2">Submissions</h5>
-                        <SubmissionList submissions={a.submissions || []} />
+                        {Array.isArray(a.submissions) && a.submissions.length > 0 ? (
+                          <ul className="space-y-2">
+                            {a.submissions.map((s: any) => (
+                              <li key={s.id} className="flex items-center justify-between border rounded p-2">
+                                <div>
+                                  <div className="text-sm font-medium">{s.student?.email ?? s.student_id}</div>
+                                  <div className="text-xs text-slate-500">{s.assignment_title ?? ''} • {s.submitted_at ? new Date(s.submitted_at).toLocaleString() : ''}</div>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  {s.file_url ? <a href={s.file_url} target="_blank" rel="noreferrer" className="text-indigo-600 text-sm">Download PDF</a> : <span className="text-xs text-slate-500">No file</span>}
+                                  <div className="text-xs text-slate-400">{s.status ?? ''}</div>
+                                  <button onClick={() => openGradeModal(s)} className="px-3 py-1 bg-indigo-600 text-white rounded-md text-sm">Grade</button>
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <div className="text-sm text-slate-500">No submissions yet.</div>
+                        )}
                       </div>
                     </li>
                   ))}
@@ -665,6 +744,33 @@ export default function CoursesList(): JSX.Element {
                   setError(err?.message || String(err));
                 }
               }} className="px-3 py-1 bg-indigo-600 text-white rounded">Save changes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Grade submission modal */}
+      {gradeModalOpen && gradingSubmission && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40 z-40" onClick={closeGradeModal} />
+          <div className="relative bg-white rounded-lg shadow-lg w-full max-w-md p-6 z-50">
+            <h3 className="text-lg font-semibold mb-3">Grade submission</h3>
+            <div className="space-y-3">
+              <div className="text-sm"><strong>Student:</strong> {gradingSubmission.student?.email ?? gradingSubmission.student_id}</div>
+              <div className="text-sm"><strong>Assignment:</strong> {gradingSubmission.assignment_title ?? ''}</div>
+              <div>
+                <label className="block text-xs text-slate-500">Grade</label>
+                <input type="number" value={gradeValue as any} onChange={(e) => setGradeValue(e.target.value === '' ? '' : Number(e.target.value))} className="w-full border px-2 py-1 rounded" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500">Feedback (optional)</label>
+                <textarea value={gradeFeedback} onChange={(e) => setGradeFeedback(e.target.value)} className="w-full border px-2 py-1 rounded h-24"></textarea>
+              </div>
+              {gradingError && <div className="text-sm text-red-600">{gradingError}</div>}
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={closeGradeModal} className="px-3 py-1 border rounded">Cancel</button>
+              <button onClick={submitGrade} disabled={gradingLoading} className="px-3 py-1 bg-indigo-600 text-white rounded">{gradingLoading ? 'Saving…' : 'Save grade'}</button>
             </div>
           </div>
         </div>

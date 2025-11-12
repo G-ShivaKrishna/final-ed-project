@@ -227,8 +227,8 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
 
   const QuickActionButtons = () => (
     <div className="flex flex-col gap-2">
-      <button type="button" onClick={() => setActiveView('courses')} className="text-left px-3 py-2 border rounded-md">My courses</button>
-      <button type="button" onClick={() => setActiveView('create')} className="text-left px-3 py-2 border rounded-md">Create course</button>
+      <button type="button" onClick={() => { setActiveView('courses'); }} className="text-left px-3 py-2 border rounded-md">My courses</button>
+      <button type="button" onClick={() => { setActiveView('create'); }} className="text-left px-3 py-2 border rounded-md">Create course</button>
       <button onClick={() => navigate('/inbox')} className="text-left px-3 py-2 border rounded-md">Inbox</button>
     </div>
   );

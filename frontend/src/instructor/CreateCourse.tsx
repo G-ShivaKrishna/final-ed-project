@@ -10,7 +10,7 @@ export default function CreateCourse() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [courseCode, setCourseCode] = useState<string | null>(null);
-  const navigate = useNavigate ? (useNavigate() as any) : (undefined as any); // if useNavigate is available; otherwise ignore
+  const navigate = useNavigate();
 
   const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
 
@@ -44,6 +44,7 @@ export default function CreateCourse() {
       if (!res.ok) {
         // surface backend error message if present
         const msg = (body && (body.error || body.details || JSON.stringify(body))) || `Request failed with status ${res.status}`;
+        console.error('CreateCourse API error:', msg, body);
         throw new Error(msg);
       }
 
@@ -54,7 +55,13 @@ export default function CreateCourse() {
       setSuccess(true);
       setCourseCode(finalCourseId);
       setFormData({ name: '' });
+
+      // auto-navigate back to instructor dashboard after a short delay so user sees success
+      setTimeout(() => {
+        try { navigate('/instructor-dashboard'); } catch { /* ignore */ }
+      }, 1400);
     } catch (err) {
+      console.error('CreateCourse failed', err);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
@@ -65,8 +72,8 @@ export default function CreateCourse() {
     <div className="max-w-2xl mx-auto">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <button onClick={() => navigate && navigate('/instructor-dashboard')} className="px-3 py-1 border rounded-md">Back</button>
-          <button onClick={() => navigate && navigate('/instructor-dashboard')} className="px-3 py-1 border rounded-md">Dashboard</button>
+          <button onClick={() => navigate(-1)} className="px-3 py-1 border rounded-md">Back</button>
+          <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-1 border rounded-md">Dashboard</button>
         </div>
       </div>
       <div className="bg-white rounded-xl shadow-sm p-6">
