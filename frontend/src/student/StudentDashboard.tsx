@@ -221,6 +221,20 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
     }
   }
 
+  // helper: try getPublicUrl then fall back to signed URL for private buckets
+  async function getPublicUrlOrSigned(bucket: string, path: string) {
+    try {
+      const pubRes = await supabase.storage.from(bucket).getPublicUrl(path);
+      const publicUrl = (pubRes as any)?.data?.publicUrl || (pubRes as any)?.publicURL || (pubRes as any)?.public_url || '';
+      if (publicUrl) return publicUrl;
+      const { data: signedData, error: signedErr } = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60);
+      if (!signedErr && signedData?.signedURL) return signedData.signedURL;
+    } catch (e) {
+      console.warn('getPublicUrlOrSigned failed', e);
+    }
+    return '';
+  }
+
   // upload submission to storage and call backend submit endpoint
   async function uploadSubmissionFile(file: File, courseId: string | number, assignmentId: string | number, studentId: string) {
     if (!file) return '';
@@ -229,8 +243,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
       const path = `${courseId}/${assignmentId}/${studentId}_${Date.now()}_${safe}`;
       const { data, error } = await supabase.storage.from('submissions').upload(path, file, { upsert: true });
       if (error) throw error;
-      const urlRes = await supabase.storage.from('submissions').getPublicUrl(path);
-      const publicUrl = (urlRes as any)?.data?.publicUrl || (urlRes as any)?.publicURL || '';
+      const publicUrl = await getPublicUrlOrSigned('submissions', path);
       return publicUrl;
     } catch (err) {
       console.warn('submission upload failed', err);
@@ -425,7 +438,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
               <span className={`relative z-10 block w-6 h-6 bg-white rounded-full shadow transform transition-transform duration-300 ${theme === 'dark' ? 'translate-x-6 rotate-6' : 'translate-x-0 rotate-0'}`} />
             </button>
 
-            <button onClick={onLogout} className="px-4 py-2 bg-red-600 text-white rounded">Logout</button>
+            <button onLogout={onLogout} className="px-4 py-2 bg-red-600 text-white rounded">Logout</button>
             <button onClick={() => setMenuOpen(v => !v)} className="h-10 w-10 bg-white rounded flex items-center justify-center"><MoreVertical size={18} /></button>
             {menuOpen && (
               <div ref={menuRef} className="absolute right-0 mt-2 w-40 bg-white rounded shadow z-50">

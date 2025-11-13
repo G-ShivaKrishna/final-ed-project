@@ -60,16 +60,28 @@ export default function CoursesList(): JSX.Element {
   const [gradingLoading, setGradingLoading] = useState(false);
   const [gradingError, setGradingError] = useState<string | null>(null);
 
-  // helper: upload a file to Supabase storage 'assignments' bucket and return public URL (best-effort)
+  // helper: try getPublicUrl then fall back to signed URL for private buckets (assignments bucket)
+  async function getPublicUrlOrSigned(bucket: string, path: string) {
+    try {
+      const pubRes = await supabase.storage.from(bucket).getPublicUrl(path);
+      const publicUrl = (pubRes as any)?.data?.publicUrl || (pubRes as any)?.publicURL || (pubRes as any)?.public_url || '';
+      if (publicUrl) return publicUrl;
+      const { data: signedData, error: signedErr } = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60);
+      if (!signedErr && signedData?.signedURL) return signedData.signedURL;
+    } catch (e) {
+      console.warn('getPublicUrlOrSigned failed', e);
+    }
+    return '';
+  }
+
+  // helper: upload a file to Supabase storage 'assignments' bucket and return a usable URL (public or signed)
   async function uploadAssignmentFile(file: File, courseId: string) {
     if (!file) return '';
     try {
       const path = `${courseId}/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
       const { data, error } = await supabase.storage.from('assignments').upload(path, file, { upsert: true });
       if (error) throw error;
-      // getPublicUrl shape: { data: { publicUrl } }
-      const urlRes = await supabase.storage.from('assignments').getPublicUrl(path);
-      const publicUrl = (urlRes as any)?.data?.publicUrl || (urlRes as any)?.publicURL || '';
+      const publicUrl = await getPublicUrlOrSigned('assignments', path);
       return publicUrl;
     } catch (err) {
       console.warn('file upload failed', err);

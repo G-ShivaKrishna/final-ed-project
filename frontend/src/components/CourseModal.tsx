@@ -1,6 +1,39 @@
 import React from 'react';
-import AssignmentList from './AssignmentList';
+const API_BASE = (import.meta as any).env?.VITE_API_URL || window.location.origin;
+function resolveHref(raw?: string | null) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (s.startsWith('http://') || s.startsWith('https://')) return s;
+  if (s.startsWith('//')) return window.location.protocol + s;
+  if (s.startsWith('/')) return window.location.origin + s;
+  return `${API_BASE.replace(/\/$/, '')}/${s.replace(/^\//, '')}`;
+}
 
+// robust extractor used by the modal (same logic as CourseDetail)
+function extractUrlFromTextOrResource(rawText?: string | null, resource?: any): string | null {
+  const t = String(rawText ?? '').trim();
+  const m = t.match(/https?:\/\/[^\s'"]+/i);
+  if (m) return resolveHref(m[0]);
+  const attach = t.match(/attachment[:\s-]*([^\s'"]+)/i);
+  if (attach && attach[1]) return resolveHref(attach[1]);
+  if (resource && typeof resource === 'object') {
+    const candidates = ['file_url', 'url', 'link', 'video_url', 'content', 'path', 'storage_path'];
+    for (const k of candidates) {
+      const v = resource[k];
+      if (!v) continue;
+      if (k === 'content') {
+        const cm = String(v).match(/https?:\/\/[^\s'"]+/i);
+        if (cm) return resolveHref(cm[0]);
+      } else {
+        const s = String(v).trim();
+        if (s && s !== '#' && s !== '') return resolveHref(s);
+      }
+    }
+  }
+  return null;
+}
+ 
 export default function CourseModal({
   open,
   onClose,
@@ -74,16 +107,30 @@ export default function CourseModal({
             <div>
               <h4 className="text-sm mb-2">Resources</h4>
               {courseResources.length === 0 ? <div className="text-sm text-slate-500">No resources</div> :
-                <ul className="space-y-2">{courseResources.map((r:any) => (
-                  <li key={r.id} className="p-3 border rounded flex items-center justify-between">
-                    <div>
-                      <div className="font-medium">{r.title}</div>
-                      <div className="text-xs text-slate-500">{r.type}{r.video_url ? ` • ${r.video_url}` : ''}</div>
-                    </div>
-                    <a href={r.content?.match?.(/https?:\/\/\S+/)?.[0] ?? r.video_url ?? '#'} target="_blank" rel="noreferrer" className="text-indigo-600">Download</a>
-                  </li>
-                ))}</ul>}
-            </div>
+                <ul className="space-y-2">{courseResources.map((r:any) => {
+                  // robustly extract url from content / video_url / link / known fields
+                  const href = extractUrlFromTextOrResource(r.content ?? null, r) ?? extractUrlFromTextOrResource(r.video_url ?? null, r) ?? extractUrlFromTextOrResource(r.link ?? null, r);
+                  return (
+                    <li key={r.id} className="p-3 border rounded flex items-center justify-between">
+                      <div>
+                        <div className="font-medium">{r.title}</div>
+                        <div className="text-xs text-slate-500">{r.type}{r.video_url ? ` • ${r.video_url}` : ''}</div>
+                      </div>
+                      {href ? (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); window.open(href, '_blank', 'noopener'); }}
+                          className="text-indigo-600 underline"
+                        >
+                          Open
+                        </button>
+                      ) : (
+                        <span className="text-indigo-600">Open</span>
+                      )}
+                    </li>
+                  );
+                })}</ul>}
+             </div>
 
             <div>
               <h4 className="text-sm mb-2">Assignments</h4>

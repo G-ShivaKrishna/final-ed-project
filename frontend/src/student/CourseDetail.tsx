@@ -2,6 +2,59 @@ import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+const API_BASE = (import.meta as any).env?.VITE_API_URL || window.location.origin;
+
+// Resolve a resource link into an absolute URL safe to open in a new tab.
+function resolveHref(raw?: string | null) : string | null {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (s.startsWith('http://') || s.startsWith('https://')) return s;
+  if (s.startsWith('//')) return window.location.protocol + s;
+  if (s.startsWith('/')) return window.location.origin + s;
+  return `${API_BASE.replace(/\/$/, '')}/${s.replace(/^\//, '')}`;
+}
+
+// Better extractor: checks content for explicit URLs, "Attachment:" patterns,
+// and common fields that may contain storage URLs. Returns a usable absolute href or null.
+function extractUrlFromTextOrResource(rawText?: string | null, resource?: any): string | null {
+  const t = String(rawText ?? '').trim();
+  // 1) explicit http(s) URL inside text
+  const m = t.match(/https?:\/\/[^\s'"]+/i);
+  if (m) return resolveHref(m[0]);
+
+  // 2) common "Attachment:" or "Attachment - " pattern followed by a URL
+  const attach = t.match(/attachment[:\s-]*([^\s'"]+)/i);
+  if (attach && attach[1]) {
+    return resolveHref(attach[1]);
+  }
+
+  // 3) if resource object provided, try a few known fields
+  if (resource && typeof resource === 'object') {
+    const candidates = ['file_url', 'url', 'link', 'video_url', 'content', 'path', 'storage_path'];
+    for (const k of candidates) {
+      const v = resource[k];
+      if (v) {
+        // if content field contains an embedded URL, reuse that extraction
+        if (k === 'content') {
+          const cm = String(v).match(/https?:\/\/[^\s'"]+/i);
+          if (cm) return resolveHref(cm[0]);
+        } else {
+          // accept raw URL or relative path
+          const s = String(v).trim();
+          if (s) {
+            // ignore placeholder '#'
+            if (s === '#' || s === '') continue;
+            return resolveHref(s);
+          }
+        }
+      }
+    }
+  }
+
+  // 4) nothing found
+  return null;
+}
 
 type Material = { id: string; title: string; uploadedAt: string; link?: string; description?: string; type?: string };
 type Assignment = { id: string; title: string; due_date: string; status: string; points?: number; description?: string; postedAt?: string; submitted_file?: string };
@@ -71,15 +124,30 @@ export default function CourseDetail(): JSX.Element {
   const [uploadCourseId, setUploadCourseId] = React.useState<string | number | null>(idParam);
   const [uploadError, setUploadError] = React.useState<string | null>(null);
   const [uploading, setUploading] = React.useState(false);
-  // helper: upload file to 'submissions' bucket and return public URL
+  // helper: try getPublicUrl then fall back to a signed URL for private buckets
+  async function getPublicUrlOrSigned(bucket: string, path: string) {
+    try {
+      const pubRes = await supabase.storage.from(bucket).getPublicUrl(path);
+      const publicUrl = (pubRes as any)?.data?.publicUrl || (pubRes as any)?.publicURL || (pubRes as any)?.public_url || '';
+      if (publicUrl) return publicUrl;
+
+      // fall back to signed URL (valid for 1 hour)
+      const { data: signedData, error: signedErr } = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60);
+      if (!signedErr && signedData?.signedURL) return signedData.signedURL;
+    } catch (e) {
+      console.warn('getPublicUrlOrSigned failed', e);
+    }
+    return '';
+  }
+
+  // helper: upload file to 'submissions' bucket and return a usable URL (public or signed)
   async function uploadSubmissionFile(file: File, courseId: string | number, assignmentId: string | number, studentId: string) {
     if (!file) return '';
     try {
       const path = `${courseId}/${assignmentId}/${studentId}_${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
       const { data, error } = await supabase.storage.from('submissions').upload(path, file, { upsert: true });
       if (error) throw error;
-      const urlRes = await supabase.storage.from('submissions').getPublicUrl(path);
-      const publicUrl = (urlRes as any)?.data?.publicUrl || (urlRes as any)?.publicURL || '';
+      const publicUrl = await getPublicUrlOrSigned('submissions', path);
       return publicUrl;
     } catch (err) {
       console.warn('uploadSubmissionFile failed', err);
@@ -244,13 +312,23 @@ export default function CourseDetail(): JSX.Element {
                         {m.description && (
                           <div className="text-sm text-slate-600 mt-1">
                             {(() => {
-                              const urlMatch = String(m.description).match(/https?:\/\/\S+/);
-                              if (urlMatch) {
-                                const before = String(m.description).split(urlMatch[0])[0];
+                              // use robust extractor which also checks for "Attachment:" and resource fields
+                              const url = extractUrlFromTextOrResource(m.description, m);
+                              if (url) {
+                                // show the descriptive text before the URL if present
+                                const before = String(m.description ?? '').split(url)[0];
                                 return (
                                   <>
                                     {before && <span>{before}</span>}
-                                    <div><a href={urlMatch[0]} target="_blank" rel="noreferrer" className="text-indigo-600">Download attachment</a></div>
+                                    <div>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); window.open(url, '_blank', 'noopener'); }}
+                                        className="text-indigo-600 underline"
+                                      >
+                                        Download attachment
+                                      </button>
+                                    </div>
                                   </>
                                 );
                               }
@@ -260,7 +338,23 @@ export default function CourseDetail(): JSX.Element {
                         )}
                         <div className="text-xs text-slate-500 mt-2">Uploaded {m.uploadedAt ?? m.created_at ?? ''}</div>
                       </div>
-                      <a href={m.link ?? m.video_url ?? '#'} className="text-indigo-600" target={m.link || m.video_url ? '_blank' : undefined} rel="noreferrer">View</a>
+                      {(() => {
+                        // prefer explicit fields, then content text; robustly extract a real URL
+                        const href = extractUrlFromTextOrResource(m.link ?? m.video_url ?? null, m) ?? extractUrlFromTextOrResource(m.description, m);
+                        if (!href) {
+                          return <span className="text-indigo-600 cursor-default">View</span>;
+                        }
+                        return (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); window.open(href, '_blank', 'noopener'); }}
+                            className="text-indigo-600 underline"
+                            aria-label={`Open ${m.title ?? 'resource'}`}
+                          >
+                            View
+                          </button>
+                        );
+                      })()}
                     </li>
                   ))}
                 </ul>
@@ -282,13 +376,17 @@ export default function CourseDetail(): JSX.Element {
                           {a.description && (
                             <div className="text-sm text-slate-600 mt-1">
                               {(() => {
-                                const urlMatch = String(a.description).match(/https?:\/\/\S+/);
-                                if (urlMatch) {
-                                  const before = String(a.description).split(urlMatch[0])[0];
+                                const url = extractUrlFromTextOrResource(a.description, a);
+                                if (url) {
+                                  const before = String(a.description ?? '').split(url)[0];
                                   return (
                                     <>
                                       {before && <span>{before}</span>}
-                                      <div><a href={urlMatch[0]} target="_blank" rel="noreferrer" className="text-indigo-600">Download attachment</a></div>
+                                      <div>
+                                        <button type="button" onClick={(e) => { e.stopPropagation(); window.open(url, '_blank', 'noopener'); }} className="text-indigo-600 underline">
+                                          Download attachment
+                                        </button>
+                                      </div>
                                     </>
                                   );
                                 }
