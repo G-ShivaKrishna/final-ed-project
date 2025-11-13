@@ -129,7 +129,7 @@ export default function ViewGrades(): JSX.Element {
                       <td className="p-3 text-sm text-slate-600">{g.assignment}</td>
                       <td className="p-3 text-sm text-slate-700">
                         {g.grade !== null
-                          ? `${g.grade} / 10` // show marks out of 10 as requested
+                          ? `${g.grade} / ${g.outOf ?? 10}`
                           : 'Yet to grade'}
                       </td>
                       <td className="p-3 text-sm text-slate-600">{g.feedback || '—'}</td>

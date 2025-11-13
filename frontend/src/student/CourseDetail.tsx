@@ -401,7 +401,13 @@ export default function CourseDetail(): JSX.Element {
                           <div className="text-xs text-slate-500 mt-2">Due {a.due_date ? new Date(a.due_date).toLocaleDateString() : 'No due date'}</div>
                           {a.postedAt && <div className="text-xs text-slate-400">Posted {a.postedAt}</div>}
                         </div>
-                        <div className="text-xs text-slate-500">{a.points ?? '-'} pts</div>
+                        {/* Show earned grade / max points when available, otherwise show assignment max points.
+                            Default max to 10 when instructor didn't provide points. */}
+                        <div className="text-xs text-slate-500">
+                          {a.submission?.grade !== undefined && a.submission?.grade !== null
+                            ? `${a.submission.grade} / ${a.points ?? 10} pts`
+                            : `${a.points ?? 10} pts`}
+                        </div>
                       </div>
                       <div className="mt-2 text-xs text-slate-600">Status: {a.status}{a.submitted_file ? ` — ${a.submitted_file}` : ''}</div>
                       <div className="mt-2">

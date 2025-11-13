@@ -490,7 +490,11 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
                           </div>
                           <div className="flex flex-col items-end gap-2">
                             <div className={`px-2 py-1 rounded-full text-xs border ${statusColor(a.status)}`}>{a.status}</div>
-                            <div className="text-xs text-slate-400">{a.points ?? '-'} pts</div>
+                            <div className="text-xs text-slate-400">
+                              {a.submission?.grade !== undefined && a.submission?.grade !== null
+                                ? `${a.submission.grade} / ${a.points ?? 10} pts`
+                                : `${a.points ?? 10} pts`}
+                            </div>
                             {a.status !== 'graded' && <button onClick={() => handleInitiateUpload(a.id, a.course?.id)} className="mt-2 px-2 py-1 bg-indigo-600 text-white text-xs rounded">Submit</button>}
                           </div>
                         </div>
