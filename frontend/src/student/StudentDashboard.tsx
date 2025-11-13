@@ -25,7 +25,7 @@ function formatDate(iso: string) {
   return d.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-export default function StudentDashboard({ onLogout }: { onLogout: (nav: any) => void }) {
+export default function StudentDashboard({ onLogout }: { onLogout: () => void }) {
   const navigate = useNavigate();
 
   const [profileName, setProfileName] = useState<string | null>(null);
@@ -425,7 +425,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: (nav: any) =>
               <span className={`relative z-10 block w-6 h-6 bg-white rounded-full shadow transform transition-transform duration-300 ${theme === 'dark' ? 'translate-x-6 rotate-6' : 'translate-x-0 rotate-0'}`} />
             </button>
 
-            <button onLogout={onLogout} className="px-4 py-2 bg-red-600 text-white rounded">Logout</button>
+            <button onClick={onLogout} className="px-4 py-2 bg-red-600 text-white rounded">Logout</button>
             <button onClick={() => setMenuOpen(v => !v)} className="h-10 w-10 bg-white rounded flex items-center justify-center"><MoreVertical size={18} /></button>
             {menuOpen && (
               <div ref={menuRef} className="absolute right-0 mt-2 w-40 bg-white rounded shadow z-50">
