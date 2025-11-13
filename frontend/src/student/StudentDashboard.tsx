@@ -60,6 +60,36 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
   const [joinLoading, setJoinLoading] = useState(false);
   const joinInputRef = useRef<HTMLInputElement | null>(null);
 
+  // reusable join request used by both panel and modal
+  async function submitJoinRequest(code: string) {
+    if (!code || !code.trim()) {
+      alert('Enter a course code');
+      return;
+    }
+    setJoinLoading(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const studentId = sessionData?.session?.user?.id;
+      if (!studentId) throw new Error('Not authenticated');
+      const res = await fetch(`${API_BASE}/users/courses/join-request/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ student_id: studentId, course_code: code.trim() }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Failed: ${res.status}`);
+      setJoinModalOpen(false);
+      setJoinCode('');
+      await fetchEnrolledCourses();
+      // optional: notify user
+      // set a toast/state here if desired
+    } catch (err: any) {
+      alert(String(err?.message || err));
+    } finally {
+      setJoinLoading(false);
+    }
+  }
+
   // helpers: API base
   const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
 
@@ -450,6 +480,36 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
           </div>
         </header>
 
+        {/* Join Course panel (visible, below header) */}
+        <div className="mb-6 max-w-3xl">
+          <div className="bg-white rounded-xl shadow p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex-1">
+              <h3 className="text-lg font-medium">Join Course</h3>
+              <p className="text-sm text-slate-500">Enter a course code to request joining.</p>
+              <div className="mt-2 flex gap-2">
+                <input
+                  ref={joinInputRef}
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value)}
+                  placeholder="Course code"
+                  className="flex-1 px-3 py-2 border rounded"
+                />
+                <button
+                  onClick={() => submitJoinRequest(joinCode)}
+                  disabled={joinLoading}
+                  className={`px-3 py-2 rounded ${joinLoading ? 'bg-indigo-300 text-white' : 'bg-indigo-600 text-white'}`}
+                >
+                  {joinLoading ? 'Requesting…' : 'Join'}
+                </button>
+              </div>
+            </div>
+            <div className="border-l pl-4 hidden sm:block">
+              {/* Use the same route as the Courses quick-action button */}
+              <button onClick={() => navigate('/courses')} className="text-left px-3 py-2 border rounded-md">View all courses</button>
+            </div>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           <main className="lg:col-span-3 space-y-6">
             <section>
@@ -583,7 +643,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
           uploading={uploading}
         />
 
-        {/* Join modal */}
+        {/* Join modal (uses shared submitJoinRequest) */}
         {joinModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
             <div className="absolute inset-0 bg-black/40" onClick={() => setJoinModalOpen(false)} />
@@ -592,29 +652,12 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
               <input ref={joinInputRef} value={joinCode} onChange={(e)=>setJoinCode(e.target.value)} placeholder="Enter course code" className="w-full border px-2 py-1 rounded mb-3" />
               <div className="flex justify-end gap-2">
                 <button onClick={() => setJoinModalOpen(false)} className="px-3 py-1 border rounded">Cancel</button>
-                <button onClick={async () => {
-                  setJoinLoading(true);
-                  try {
-                    const { data: sessionData } = await supabase.auth.getSession();
-                    const studentId = sessionData?.session?.user?.id;
-                    if (!studentId) throw new Error('Not authenticated');
-                    const res = await fetch(`${API_BASE}/users/courses/join-request/`, {
-                      method: 'POST', headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ student_id: studentId, course_code: joinCode.trim() })
-                    });
-                    const body = await res.json().catch(()=>({}));
-                    if (!res.ok) throw new Error(body?.error || `Failed: ${res.status}`);
-                    setJoinModalOpen(false);
-                    await fetchEnrolledCourses();
-                  } catch (err: any) {
-                    alert(String(err?.message || err));
-                  } finally { setJoinLoading(false); }
-                }} className="px-3 py-1 bg-indigo-600 text-white rounded">{joinLoading ? 'Joining...' : 'Request'}</button>
+                <button onClick={() => submitJoinRequest(joinCode)} className="px-3 py-1 bg-indigo-600 text-white rounded">{joinLoading ? 'Joining...' : 'Request'}</button>
               </div>
             </div>
           </div>
         )}
-
+        
         {/* hidden file input */}
         <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden" onChange={handleFileChange} />
 

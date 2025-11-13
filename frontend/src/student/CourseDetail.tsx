@@ -1,5 +1,5 @@
 import React from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { ChevronLeft } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 const API_BASE = (import.meta as any).env?.VITE_API_URL || window.location.origin;
@@ -109,7 +109,55 @@ export default function CourseDetail(): JSX.Element {
   const params = useParams();
   const idParam = (params as any).id ?? (params as any).courseId ?? (params as any).course_db_id ?? null;
   const navigate = useNavigate();
-  const course = SAMPLE_COURSES.find((c) => c.id === idParam) ?? { id: idParam ?? 'unknown', code: idParam ?? '', title: 'Course' };
+  const location = useLocation();
+  // prefer course passed from the course list via navigation state
+  const stateCourseRaw = (location.state as any)?.course ?? (location.state as any)?.courseItem ?? null;
+
+  // helper: create a readable name from an id-like string (fallback when backend/title not available)
+  function prettifyId(raw?: string | null) {
+    if (!raw) return 'Course';
+    try {
+      let s = String(raw);
+      s = decodeURIComponent(s);
+      s = s.replace(/[_\-+]+/g, ' ').replace(/\s+/g, ' ').trim();
+      s = s.split(' ').map((w) => w ? (w[0].toUpperCase() + w.slice(1)) : '').join(' ');
+      return s || 'Course';
+    } catch {
+      return String(raw);
+    }
+  }
+
+  // normalize many possible backend course shapes into { id, code, title }
+  function normalizeCourseObject(obj: any, fallbackId?: string | null) {
+    if (!obj || typeof obj !== 'object') return { id: fallbackId ?? String(fallbackId ?? ''), code: '', title: prettifyId(fallbackId) };
+    const title = obj.title || obj.name || obj.course_name || obj.display_name || obj.courseTitle || obj.courseTitleString || obj.label || obj.full_name;
+    const code = obj.code || obj.course_code || obj.courseId || obj.course_id || obj.courseIdString || '';
+    // ensure correct precedence when mixing || and ??
+    const id = obj.id || obj.course_id || obj.courseId || (fallbackId ?? '');
+    return { id: String(id), code: String(code || ''), title: String(title || code || prettifyId(fallbackId)) };
+  }
+
+  // try to find a matching sample course by id, code or title (case-insensitive)
+  function findSampleCourseMatch(raw?: string | null) {
+    if (!raw) return null;
+    const key = String(raw).trim().toLowerCase();
+    return SAMPLE_COURSES.find((c) => {
+      if (!c) return false;
+      return [c.id, c.code, c.title].some((v) => String(v ?? '').trim().toLowerCase() === key);
+    }) ?? null;
+  }
+
+  // keep course metadata in state so we can update it from API responses
+  const stateCourse = stateCourseRaw ? normalizeCourseObject(stateCourseRaw, idParam) : null;
+  const sampleMatch = stateCourse ?? findSampleCourseMatch(idParam);
+  const initialCourse = sampleMatch ?? normalizeCourseObject(null, idParam);
+  const [course, setCourse] = React.useState(initialCourse);
+  // ensure course state updates when idParam changes (page reload with different id)
+  React.useEffect(() => {
+    // prefer navigation state first (if user came from the list), then SAMPLE match, then prettified id
+    const match = stateCourse ?? findSampleCourseMatch(idParam);
+    setCourse(match ?? normalizeCourseObject(null, idParam));
+  }, [idParam]);
   const [tab, setTab] = React.useState<'syllabus' | 'assignments'>('syllabus');
 
   // UI state: prefer backend data but fall back to SAMPLE fixtures
@@ -124,6 +172,7 @@ export default function CourseDetail(): JSX.Element {
   const [uploadCourseId, setUploadCourseId] = React.useState<string | number | null>(idParam);
   const [uploadError, setUploadError] = React.useState<string | null>(null);
   const [uploading, setUploading] = React.useState(false);
+
   // helper: try getPublicUrl then fall back to a signed URL for private buckets
   async function getPublicUrlOrSigned(bucket: string, path: string) {
     try {
@@ -155,6 +204,40 @@ export default function CourseDetail(): JSX.Element {
     }
   }
 
+  // fetch course metadata early so header shows correct name (independent of current tab)
+  React.useEffect(() => {
+    let mounted = true;
+    async function fetchCourseMeta() {
+      if (!idParam) return;
+      try {
+        const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+        // try a dedicated metadata endpoint; fallback to assignments/resources shapes
+        const urls = [
+          `${API_BASE}/users/courses/detail/?course_db_id=${encodeURIComponent(String(idParam))}`,
+          `${API_BASE}/users/courses/?course_db_id=${encodeURIComponent(String(idParam))}`,
+        ];
+        for (const url of urls) {
+          try {
+            const res = await fetch(url);
+            if (!res.ok) continue;
+            const j = await res.json().catch(() => null);
+            if (!j) continue;
+            // try common locations for a course object
+            const candidate = j.course ?? j.data?.course ?? j.data ?? j;
+            if (candidate && typeof candidate === 'object') {
+              const normalized = normalizeCourseObject(candidate, idParam);
+              if (mounted) setCourse((prev) => ({ ...prev, ...normalized }));
+              return;
+            }
+          } catch { /* try next url */ }
+        }
+      } catch (_) { /* ignore metadata fetch errors */ }
+    }
+    fetchCourseMeta();
+    return () => { mounted = false; };
+  }, [idParam]);
+
+  // fetch only the data relevant to the active tab (so reload/fetch is per-tab)
   React.useEffect(() => {
     let mounted = true;
     async function fetchCourseData() {
@@ -166,32 +249,53 @@ export default function CourseDetail(): JSX.Element {
         const userId = sessionData?.session?.user?.id;
         const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
 
-        // resources
-        try {
-          const rres = await fetch(`${API_BASE}/users/courses/resources/?course_db_id=${encodeURIComponent(String(idParam))}&user_id=${encodeURIComponent(String(userId ?? ''))}`);
-          const rjson = await rres.json().catch(() => []);
-          if (rres.ok && mounted) setSyllabusState(Array.isArray(rjson) ? rjson : (rjson?.data ?? []));
-        } catch (_e) {
-          // keep sample on error
-        }
-
-        // assignments
-        try {
-          const ares = await fetch(`${API_BASE}/users/courses/assignments/?course_db_id=${encodeURIComponent(String(idParam))}&user_id=${encodeURIComponent(String(userId ?? ''))}`);
-          const ajson = await ares.json().catch(() => []);
-          if (ares.ok && mounted) {
-            const normalized = (Array.isArray(ajson) ? ajson : (ajson?.data ?? [])).map((a: any) => {
-              // ensure due_date is ISO for consistent display
-              if (a.due_date) {
-                try { a.due_date = new Date(a.due_date).toISOString(); } catch (_) {}
+        if (tab === 'syllabus') {
+          try {
+            const rres = await fetch(`${API_BASE}/users/courses/resources/?course_db_id=${encodeURIComponent(String(idParam))}&user_id=${encodeURIComponent(String(userId ?? ''))}`);
+            const rjson = await rres.json().catch(() => []);
+            if (rres.ok && mounted) {
+              const payload = Array.isArray(rjson) ? rjson : (rjson?.data ?? []);
+              setSyllabusState(payload);
+              // merge course metadata if present (accept multiple shapes)
+              const courseSource = (Array.isArray(rjson) ? rjson : rjson)?.course ?? rjson?.course ?? (payload && (payload.course || payload[0]?.course));
+              if (courseSource) {
+                const normalized = normalizeCourseObject(courseSource, idParam);
+                setCourse((prev) => ({ ...prev, ...normalized }));
+              } else if (rjson && typeof rjson === 'object' && (rjson.title || rjson.name || rjson.course_name)) {
+                setCourse((prev) => ({ ...prev, ...normalizeCourseObject(rjson, idParam) }));
               }
-              if (a.course && !a.course.code) a.course.code = a.course.course_id || a.course.courseId || a.course.code;
-              return a;
-            });
-            if (normalized.length) setAssignmentsState(normalized);
+            }
+          } catch (_e) {
+            // keep sample on error
           }
-        } catch (_e) {
-          // keep sample on error
+        } else if (tab === 'assignments') {
+          try {
+            const ares = await fetch(`${API_BASE}/users/courses/assignments/?course_db_id=${encodeURIComponent(String(idParam))}&user_id=${encodeURIComponent(String(userId ?? ''))}`);
+            const ajson = await ares.json().catch(() => []);
+            if (ares.ok && mounted) {
+              const normalized = (Array.isArray(ajson) ? ajson : (ajson?.data ?? [])).map((a: any) => {
+                // ensure due_date is ISO for consistent display
+                if (a.due_date) {
+                  try { a.due_date = new Date(a.due_date).toISOString(); } catch (_) {}
+                }
+                // normalize nested course object on each assignment if present
+                if (a.course && typeof a.course === 'object') {
+                  a.course = { ...a.course, ...(normalizeCourseObject(a.course, idParam)) };
+                }
+                return a;
+              });
+              if (normalized.length) {
+                setAssignmentsState(normalized);
+                // if first assignment contains course metadata, use it to update header
+                const firstCourse = normalized[0]?.course || ajson?.course || ajson?.data?.course;
+                if (firstCourse) {
+                  setCourse((prev) => ({ ...prev, ...normalizeCourseObject(firstCourse, idParam) }));
+                }
+              }
+            }
+          } catch (_e) {
+            // keep sample on error
+          }
         }
       } catch (err: any) {
         if (mounted) setError('Failed to load course data');
@@ -201,8 +305,8 @@ export default function CourseDetail(): JSX.Element {
     }
     fetchCourseData();
     return () => { mounted = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idParam]);
+    // re-run when idParam or active tab changes
+  }, [idParam, tab]);
 
   function markAsSubmitted(id: string | number, filename?: string) {
     setAssignmentsState((prev) => prev.map((m) => (m.id === id ? { ...m, status: m.status === 'graded' ? m.status : 'submitted', submitted_file: filename ?? m.submitted_file } : m)));
@@ -284,8 +388,12 @@ export default function CourseDetail(): JSX.Element {
           <button onClick={() => navigate(-1)} className="w-10 h-10 rounded-md bg-white shadow flex items-center justify-center"> <ChevronLeft size={18} /></button>
           <div>
             <h1 className="text-2xl font-semibold">{course.title}</h1>
-            <div className="text-sm text-slate-500">{course.code}</div>
+            {/* show code when it is meaningful and distinct from the title */}
+            <div className="text-sm text-slate-500">
+              {(course.code && course.code.trim() && course.code !== course.title) ? course.code : ''}
+            </div>
           </div>
+          {/* header actions (no join button) */}
         </div>
 
         <div className="bg-white rounded-xl shadow p-4">
