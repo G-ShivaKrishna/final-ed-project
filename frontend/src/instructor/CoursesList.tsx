@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import SubmissionList from '../components/SubmissionList';
 import { fetchCourseSubmissions } from '../lib/api';
@@ -20,6 +20,9 @@ type JoinRequest = {
 };
 
 export default function CoursesList(): JSX.Element {
+  const location = useLocation();
+  const urlNavigate = useNavigate();
+
   const [courses, setCourses] = useState<Course[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -426,6 +429,30 @@ export default function CoursesList(): JSX.Element {
     }
   }
 
+  useEffect(() => {
+    // If dashboard requested a modal via query params, open it and then clean the URL.
+    try {
+      const params = new URLSearchParams(location.search);
+      const open = params.get('open'); // e.g. addAssignment | addResource
+      const typ = params.get('type'); // optional e.g. syllabus
+      // Only act if we're on the courses view (active view logic handled in parent) — still safe to check
+      if (open === 'addAssignment') {
+        setAddAssignOpen(true);
+        // remove open param
+        params.delete('open'); params.delete('type');
+        urlNavigate(`${location.pathname}?${params.toString()}`, { replace: true });
+      } else if (open === 'addResource') {
+        // if type=syllabus set resource form type
+        if (typ === 'syllabus') setResForm((s) => ({ ...s, type: 'syllabus' }));
+        else setResForm((s) => ({ ...s, type: 'video' }));
+        setAddResOpen(true);
+        params.delete('open'); params.delete('type');
+        urlNavigate(`${location.pathname}?${params.toString()}`, { replace: true });
+      }
+    } catch (_e) { /* ignore URL parsing errors */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search]);
+
   if (loading) return <div className="bg-white rounded-xl p-6 shadow-sm text-center">Loading courses...</div>;
   if (error) return <div className="bg-red-50 rounded-xl p-4 text-red-700">{error}</div>;
   if (!courses || courses.length === 0) {
@@ -442,7 +469,7 @@ export default function CoursesList(): JSX.Element {
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <button onClick={() => navigate(-1)} className="px-3 py-1 border rounded-md">Back</button>
-          <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-1 border rounded-md">Dashboard</button>
+          <button onClick={() => navigate('/instructor-dashboard?view=dashboard')} className="px-3 py-1 border rounded-md">Dashboard</button>
           <h3 className="text-lg font-medium text-slate-800 ml-3">My courses</h3>
         </div>
         <button onClick={() => navigate('/instructor/create')} className="text-sm px-3 py-1 bg-indigo-600 text-white rounded-md">New course</button>
@@ -480,7 +507,7 @@ export default function CoursesList(): JSX.Element {
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={() => navigate(-1)} className="px-3 py-2 border rounded-md">Back</button>
-                <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-2 border rounded-md">Dashboard</button>
+                <button onClick={() => navigate('/instructor-dashboard?view=dashboard')} className="px-3 py-2 border rounded-md">Dashboard</button>
                 <button onClick={() => { setSelectedCourse(null); setRequests(null); setStudents(null); }} className="px-3 py-2 border rounded-md">Close</button>
                 <button onClick={() => { /* optional: navigate to full course editor route later */ }} className="px-3 py-2 bg-indigo-600 text-white rounded-md">Open editor</button>
                 <button onClick={() => deleteCourse(selectedCourse)} className="px-3 py-2 bg-red-600 text-white rounded-md">Delete course</button>

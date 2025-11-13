@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Calendar, CheckCircle, Clock, MoreVertical, User, XCircle, Sun, Moon } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import ChatBox from '../student/ChatBot';
@@ -34,6 +34,7 @@ function formatDate(iso?: string) {
 
 export default function InstructorDashboard({ onLogout }: { onLogout: () => void }) {
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [profileName, setProfileName] = useState<string | null>(null);
   const [profileEmail, setProfileEmail] = useState<string | null>(null);
@@ -44,11 +45,18 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
   const [activeView, setActiveView] = useState('dashboard');
 
   useEffect(() => {
+    // when location.search contains ?view=..., reflect that in the UI
+    const params = new URLSearchParams(location.search);
+    const view = params.get('view');
+    if (view === 'courses' || view === 'create' || view === 'dashboard') {
+      // set matching view (default 'dashboard' for explicit dashboard)
+      setActiveView(view === 'dashboard' ? 'dashboard' : view);
+    }
     fetchAssignments();
     fetchProfileSummary();
     // Optionally, add realtime subscription logic here if needed
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [/* run on mount and when location.search changes */ location.search]);
 
   const fetchProfileSummary = async () => {
     try {
@@ -227,8 +235,11 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
 
   const QuickActionButtons = () => (
     <div className="flex flex-col gap-2">
-      <button type="button" onClick={() => { setActiveView('courses'); }} className="text-left px-3 py-2 border rounded-md">My courses</button>
-      <button type="button" onClick={() => { setActiveView('create'); }} className="text-left px-3 py-2 border rounded-md">Create course</button>
+      <button type="button" onClick={() => { navigate('/instructor-dashboard?view=courses'); setActiveView('courses'); }} className="text-left px-3 py-2 border rounded-md">My courses</button>
+      <button type="button" onClick={() => { navigate('/instructor-dashboard?view=create'); setActiveView('create'); }} className="text-left px-3 py-2 border rounded-md">Create course</button>
+      <button type="button" onClick={() => { navigate('/instructor-dashboard?view=courses&open=addAssignment'); setActiveView('courses'); }} className="text-left px-3 py-2 border rounded-md">Add assignment</button>
+      <button type="button" onClick={() => { navigate('/instructor-dashboard?view=courses&open=addResource'); setActiveView('courses'); }} className="text-left px-3 py-2 border rounded-md">Add resource</button>
+      <button type="button" onClick={() => { navigate('/instructor-dashboard?view=courses&open=addResource&type=syllabus'); setActiveView('courses'); }} className="text-left px-3 py-2 border rounded-md">Add syllabus</button>
       <button onClick={() => navigate('/inbox')} className="text-left px-3 py-2 border rounded-md">Inbox</button>
     </div>
   );
@@ -328,7 +339,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
               <div ref={menuRef} className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg ring-1 ring-black ring-opacity-5 py-1 z-50">
                 <button onClick={handleRefresh} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Refresh</button>
                 <button onClick={handleExportCSV} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Export CSV</button>
-                <button onClick={() => { setActiveView('courses'); setMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">My courses</button>
+                <button onClick={() => { navigate('/instructor-dashboard?view=courses'); setActiveView('courses'); setMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">My courses</button>
                 <button onClick={() => { navigate('/inbox'); setMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Inbox</button>
               </div>
             )}
@@ -446,7 +457,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                 <div className="bg-white rounded-xl p-4 shadow-sm">
                   <h4 className="text-sm font-medium text-slate-700 mb-3">Quick actions</h4>
                   <div className="flex flex-col gap-2">
-                    <button type="button" onClick={() => setActiveView('create')} className="text-left px-3 py-2 bg-indigo-600 text-white rounded-md">Create course</button>
+                    <button type="button" onClick={() => { navigate('/instructor-dashboard?view=create'); setActiveView('create'); }} className="text-left px-3 py-2 bg-indigo-600 text-white rounded-md">Create course</button>
                     <QuickActionButtons />
                   </div>
                 </div>

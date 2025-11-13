@@ -447,7 +447,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
                     <div className="flex justify-between">
                       <div>
                         <div className="font-semibold">{p.title}</div>
-                        <div className="text-xs text-slate-500">{p.course?.code} • {formatDate(p.due_date)}</div>
+                        <div className="text-xs text-slate-500">{p.course?.name ?? p.course?.code} • {formatDate(p.due_date)}</div>
                       </div>
                       <div className={`text-xs px-2 py-1 rounded-full ${statusColor(p.status)}`}>{p.status}</div>
                     </div>
@@ -471,7 +471,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
                         <div key={a.id} className="flex items-center justify-between p-3 border rounded">
                           <div>
                             <div className="font-medium">{a.title}</div>
-                            <div className="text-xs text-slate-500">{a.course?.code} • {formatDate(a.due_date)}</div>
+                            <div className="text-xs text-slate-500">{a.course?.name ?? a.course?.code} • {formatDate(a.due_date)}</div>
                             {/* show attachment link if present in description or submission */}
                             {a.submission?.file_url && <div className="text-xs mt-1"><a href={a.submission.file_url} target="_blank" rel="noreferrer" className="text-indigo-600">Download submission</a></div>}
                           </div>
