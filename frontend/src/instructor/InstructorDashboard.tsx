@@ -32,7 +32,7 @@ function formatDate(iso?: string) {
   return d.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-export default function InstructorDashboard({ onLogout }: { onLogout: () => void }) {
+export default function InstructorDashboard({ onLogout }: { onLogout: (nav: any) => void }) {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -329,7 +329,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
               <span className={`relative z-10 block w-6 h-6 bg-white rounded-full shadow transform transition-transform duration-300 ${theme === 'dark' ? 'translate-x-6 rotate-6' : 'translate-x-0 rotate-0'}`} />
             </button>
 
-            <button onClick={onLogout} className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg shadow hover:bg-red-700 transition">Logout</button>
+            <button onClick={() => onLogout(navigate)} className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg shadow hover:bg-red-700 transition">Logout</button>
 
             <button onClick={() => setMenuOpen((v) => !v)} className="h-10 w-10 flex items-center justify-center rounded-lg bg-white shadow-sm hover:shadow-md" aria-haspopup="menu" aria-expanded={menuOpen}>
               <MoreVertical size={20} />
