@@ -64,6 +64,30 @@ export default function CoursesList(): JSX.Element {
   const [gradingLoading, setGradingLoading] = useState(false);
   const [gradingError, setGradingError] = useState<string | null>(null);
 
+  // in-page confirmation modal state (replaces window.confirm)
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmTitle, setConfirmTitle] = useState<string>('');
+  const [confirmMessage, setConfirmMessage] = useState<string>('');
+  // store the async callback to run when confirmed
+  const confirmCallbackRef = useRef<(() => Promise<void>) | null>(null);
+
+  function openConfirm(title: string, message: string, cb: () => Promise<void>) {
+    confirmCallbackRef.current = cb;
+    setConfirmTitle(title);
+    setConfirmMessage(message);
+    setConfirmOpen(true);
+  }
+  async function runConfirm() {
+    setConfirmOpen(false);
+    const cb = confirmCallbackRef.current;
+    confirmCallbackRef.current = null;
+    if (cb) await cb();
+  }
+  function cancelConfirm() {
+    setConfirmOpen(false);
+    confirmCallbackRef.current = null;
+  }
+
   // helper: try getPublicUrl then fall back to signed URL for private buckets (assignments bucket)
   async function getPublicUrlOrSigned(bucket: string, path: string) {
     try {
@@ -126,33 +150,38 @@ export default function CoursesList(): JSX.Element {
   }, []);
 
   // delete course (instructor) — HTTP-only (backend handles verification & deletion)
-  async function deleteCourse(course: Course) {
-    const ok = window.confirm(`Delete course "${course.name}" (code ${course.course_id})? This cannot be undone.`);
-    if (!ok) return;
-    try {
-      setError(null);
-      const { data: sessionData } = await supabase.auth.getSession();
-      const instructorId = sessionData?.session?.user?.id;
-      if (!instructorId) throw new Error('Not authenticated');
+  function deleteCourse(course: Course) {
+    // show in-page confirmation and run the async delete on confirm
+    openConfirm(
+      `Delete course "${course.name}"?`,
+      `This will permanently delete the course (code ${course.course_id}). This cannot be undone.`,
+      async () => {
+        try {
+          setError(null);
+          const { data: sessionData } = await supabase.auth.getSession();
+          const instructorId = sessionData?.session?.user?.id;
+          if (!instructorId) throw new Error('Not authenticated');
 
-      const res = await fetch(`${API_BASE}/users/courses/delete/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ course_db_id: course.id, instructor_id: instructorId }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body?.error || `Delete failed: ${res.status}`);
+          const res = await fetch(`${API_BASE}/users/courses/delete/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ course_db_id: course.id, instructor_id: instructorId }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body?.error || `Delete failed: ${res.status}`);
 
-      // remove from local list and close management view if open
-      setCourses((prev) => (prev || []).filter((c) => c.id !== course.id));
-      if (selectedCourse && selectedCourse.id === course.id) {
-        setSelectedCourse(null);
-        setRequests(null);
-        setStudents(null);
+          // remove from local list and close management view if open
+          setCourses((prev) => (prev || []).filter((c) => c.id !== course.id));
+          if (selectedCourse && selectedCourse.id === course.id) {
+            setSelectedCourse(null);
+            setRequests(null);
+            setStudents(null);
+          }
+        } catch (err: any) {
+          setError(err?.message || String(err));
+        }
       }
-    } catch (err: any) {
-      setError(err?.message || String(err));
-    }
+    );
   }
 
   async function openCourseModal(course: Course) {
@@ -362,29 +391,33 @@ export default function CoursesList(): JSX.Element {
   }
 
   // delete assignment via API — HTTP-only (backend handles validation)
-  async function deleteAssignment(a: any) {
+  function deleteAssignment(a: any) {
     if (!selectedCourse || !a) return;
-    const ok = window.confirm(`Delete assignment "${a.title}"? This cannot be undone.`);
-    if (!ok) return;
-    try {
-      setError(null);
-      const { data: sessionData } = await supabase.auth.getSession();
-      const instructorId = sessionData?.session?.user?.id;
-      if (!instructorId) throw new Error('Not authenticated');
+    openConfirm(
+      `Delete assignment "${a.title}"?`,
+      'This action cannot be undone.',
+      async () => {
+        try {
+          setError(null);
+          const { data: sessionData } = await supabase.auth.getSession();
+          const instructorId = sessionData?.session?.user?.id;
+          if (!instructorId) throw new Error('Not authenticated');
 
-      const res = await fetch(`${API_BASE}/users/courses/assignments/delete/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assignment_id: a.id, instructor_id: instructorId }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body?.error || `Delete failed: ${res.status}`);
+          const res = await fetch(`${API_BASE}/users/courses/assignments/delete/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ assignment_id: a.id, instructor_id: instructorId }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body?.error || `Delete failed: ${res.status}`);
 
-      // refresh assignments list
-      await openCourseModal(selectedCourse);
-    } catch (err: any) {
-      setError(err?.message || String(err));
-    }
+          // refresh assignments list
+          await openCourseModal(selectedCourse);
+        } catch (err: any) {
+          setError(err?.message || String(err));
+        }
+      }
+    );
   }
 
   async function addResource() {
@@ -930,6 +963,21 @@ export default function CoursesList(): JSX.Element {
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={closeGradeModal} className="px-3 py-1 border rounded">Cancel</button>
               <button onClick={submitGrade} disabled={gradingLoading} className="px-3 py-1 bg-indigo-600 text-white rounded">{gradingLoading ? 'Saving…' : 'Save grade'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation modal */}
+      {confirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40 z-40" onClick={cancelConfirm} />
+          <div className="relative bg-white rounded-lg shadow-lg w-full max-w-md p-6 z-50">
+            <h3 className="text-lg font-semibold mb-3">{confirmTitle}</h3>
+            <div className="text-sm text-slate-600 mb-4">{confirmMessage}</div>
+            <div className="flex justify-end gap-2">
+              <button onClick={cancelConfirm} className="px-3 py-1 border rounded">Cancel</button>
+              <button onClick={() => runConfirm()} className="px-3 py-1 bg-red-600 text-white rounded">Confirm</button>
             </div>
           </div>
         </div>

@@ -60,10 +60,34 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
   const [joinLoading, setJoinLoading] = useState(false);
   const joinInputRef = useRef<HTMLInputElement | null>(null);
 
+  // popup state for in-page messages (replaces alert)
+  const [popup, setPopup] = useState<{ open: boolean; title?: string; message: string; kind?: 'error'|'info'|'success' }>(
+    { open: false, message: '', kind: 'info' }
+  );
+  // auto-dismiss timer ref
+  const popupTimerRef = useRef<number | null>(null);
+
+  function showPopup(message: string, kind: 'error'|'info'|'success' = 'info', title?: string, timeoutMs = 5000) {
+    // clear previous timer
+    if (popupTimerRef.current) { window.clearTimeout(popupTimerRef.current); popupTimerRef.current = null; }
+    setPopup({ open: true, title, message, kind });
+    if (timeoutMs > 0) {
+      popupTimerRef.current = window.setTimeout(() => {
+        setPopup((p) => ({ ...p, open: false }));
+        popupTimerRef.current = null;
+      }, timeoutMs);
+    }
+  }
+
+  function hidePopup() {
+    if (popupTimerRef.current) { window.clearTimeout(popupTimerRef.current); popupTimerRef.current = null; }
+    setPopup((p) => ({ ...p, open: false }));
+  }
+
   // reusable join request used by both panel and modal
   async function submitJoinRequest(code: string) {
     if (!code || !code.trim()) {
-      alert('Enter a course code');
+      showPopup('Enter a course code', 'error', 'Validation');
       return;
     }
     setJoinLoading(true);
@@ -81,10 +105,9 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
       setJoinModalOpen(false);
       setJoinCode('');
       await fetchEnrolledCourses();
-      // optional: notify user
-      // set a toast/state here if desired
+      showPopup('Join request sent — the instructor will review it.', 'success', 'Request Sent');
     } catch (err: any) {
-      alert(String(err?.message || err));
+      showPopup(String(err?.message || err), 'error', 'Request failed');
     } finally {
       setJoinLoading(false);
     }
@@ -706,7 +729,28 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
             </div>
           </div>
         )}
-        
+
+        {/* In-page Popup (replaces alert) */}
+        {popup.open && (
+          <div className="fixed inset-0 flex items-end justify-center pointer-events-none z-50">
+            <div className="mb-6 w-full max-w-md pointer-events-auto">
+              <div className={`mx-4 rounded-lg shadow-lg overflow-hidden border ${popup.kind === 'error' ? 'border-red-200' : popup.kind === 'success' ? 'border-green-200' : 'border-slate-200'}`}>
+                <div className={`p-4 ${popup.kind === 'error' ? 'bg-red-50' : popup.kind === 'success' ? 'bg-green-50' : 'bg-white'}`}>
+                  <div className="flex items-start gap-3">
+                    <div className="flex-1">
+                      {popup.title && <div className="font-semibold text-sm mb-1">{popup.title}</div>}
+                      <div className="text-sm text-slate-800">{popup.message}</div>
+                    </div>
+                    <div>
+                      <button onClick={hidePopup} className="text-xs text-slate-500 hover:underline">Dismiss</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* hidden file input */}
         <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden" onChange={handleFileChange} />
 
