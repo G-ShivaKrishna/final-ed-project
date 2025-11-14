@@ -105,6 +105,15 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
         const json = await profileRes.json();
         const data = json.data || json;
         if (data) {
+          // Redirect instructors to their dashboard to avoid showing instructor details
+          const sessionRole = sessionData?.session?.user?.user_metadata?.role;
+          const apiRole = data.role ?? (data.is_instructor ? 'instructor' : undefined);
+          const role = (apiRole || sessionRole || '').toString().toLowerCase();
+          if (role.includes('instructor')) {
+            navigate('/instructor/dashboard');
+            return; // stop loading student-specific data
+          }
+
           setProfileName(data.username || data.full_name || null);
           setProfileEmail(data.email || null);
         }
@@ -432,7 +441,6 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
   const QuickActionButtons = () => (
     <div className="flex flex-col gap-2">
       <button onClick={() => navigate('/grades')} className="text-left px-3 py-2 border rounded-md">View grades</button>
-      <button onClick={() => navigate('/courses')} className="text-left px-3 py-2 border rounded-md">Courses</button>
       <button onClick={() => navigate('/inbox')} className="text-left px-3 py-2 border rounded-md">Inbox</button>
     </div>
   );
@@ -503,10 +511,6 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
                 </button>
               </div>
             </div>
-            <div className="border-l pl-4 hidden sm:block">
-              {/* Use the same route as the Courses quick-action button */}
-              <button onClick={() => navigate('/courses')} className="text-left px-3 py-2 border rounded-md">View all courses</button>
-            </div>
           </div>
         </div>
 
@@ -573,6 +577,15 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
                 <div>
                   <div className="font-semibold">{profileName ?? 'Student'}</div>
                   <div className="text-xs text-slate-500">{profileEmail ?? ''}</div>
+                  {/* View profile button */}
+                  <div className="mt-2">
+                    <button
+                      onClick={() => navigate('/profile')}
+                      className="text-sm px-3 py-1 border rounded text-indigo-600 hover:bg-indigo-50"
+                    >
+                      View profile
+                    </button>
+                  </div>
                 </div>
               </div>
 
