@@ -526,7 +526,7 @@ export default function CoursesList(): JSX.Element {
                 {/* new quick-create buttons */}
                 <button onClick={() => setAddAssignOpen(true)} className="px-3 py-2 bg-green-600 text-white rounded-md">Add assignment</button>
                 <button onClick={() => { setResForm({ type: 'syllabus', title: '', content: '', video_url: '' }); setAddResOpen(true); }} className="px-3 py-2 bg-orange-600 text-white rounded-md">Add syllabus</button>
-                <button onClick={() => { setResForm({ type: 'video', title: '', content: '', video_url: '' }); setAddResOpen(true); }} className="px-3 py-2 bg-amber-600 text-white rounded-md">Add resource</button>
+                {/* 'Add resource' removed to avoid duplication with syllabus/video flow */}
               </div>
             </div>
 
