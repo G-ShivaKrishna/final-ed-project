@@ -175,8 +175,18 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
           try { copy.due_date = new Date(copy.due_date).toISOString(); } catch {}
         }
         if (copy.course && !(copy.course as any).code) (copy.course as any).code = (copy.course as any).course_id || (copy.course as any).courseId || (copy.course as any).code;
+        // attach stable local date key for grouping in local timezone
+        try {
+          const d = copy.due_date ? new Date(copy.due_date) : new Date();
+          const yy = d.getFullYear();
+          const mm = String(d.getMonth() + 1).padStart(2, '0');
+          const dd = String(d.getDate()).padStart(2, '0');
+          (copy as any).local_date = `${yy}-${mm}-${dd}`;
+        } catch (_) { (copy as any).local_date = null; }
         return copy;
       });
+      console.debug('student dashboard: normalized assignments', assignments.map(a => ({ id: a.id, due_date: a.due_date, local_date: (a as any).local_date })));
+
       // group by date
       const grouped = assignments.reduce((acc: Record<string, AssignmentWithCourse[]>, a) => {
         const date = a.due_date ? new Date(a.due_date) : new Date();
@@ -480,12 +490,18 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
   const groupedFlat = useMemo(() => groupedAssignments.flatMap(g => g.assignments), [groupedAssignments]);
   const recentPosts = useMemo(() => groupedFlat.sort((a,b) => new Date(b.due_date).getTime() - new Date(a.due_date).getTime()).slice(0,3), [groupedFlat]);
   const next7Days = Array.from({length:7}).map((_,i)=>{ const d=new Date(); d.setDate(d.getDate()+i); return d; });
-  const dateKey = (d: Date) => d.toISOString().slice(0,10);
+  // Use local YYYY-MM-DD key (local timezone) to avoid UTC date shifts
+  const dateKey = (d: Date) => {
+    const yy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yy}-${mm}-${dd}`;
+  };
   const assignmentsByDate = useMemo(() => {
     const m = new Map<string, AssignmentWithCourse[]>();
     groupedFlat.forEach(a => {
       try {
-        const k = dateKey(new Date(a.due_date));
+        const k = (a as any).local_date ?? dateKey(new Date(a.due_date));
         const arr = m.get(k) ?? [];
         arr.push(a);
         m.set(k, arr);

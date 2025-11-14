@@ -44,6 +44,15 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
   const [groupedAssignments, setGroupedAssignments] = useState<GroupedAssignment[]>([]);
   const [activeView, setActiveView] = useState('dashboard');
 
+  // grading modal state
+  const [gradeModalOpen, setGradeModalOpen] = useState(false);
+  const [gradingSubmission, setGradingSubmission] = useState<any | null>(null);
+  const [gradeValue, setGradeValue] = useState<number | ''>('');
+  const [gradeFeedback, setGradeFeedback] = useState<string>('');
+  const [gradingLoading, setGradingLoading] = useState(false);
+  const [gradingError, setGradingError] = useState<string | null>(null);
+  // --- end new state ---
+
   useEffect(() => {
     // when location.search contains ?view=..., reflect that in the UI
     const params = new URLSearchParams(location.search);
@@ -75,6 +84,9 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
           setProfileEmail(data.email || null);
         }
       }
+
+      // Ensure pending submissions refreshed when refreshing profile summary
+      // (fetchPendingSubmissions is called on mount and in handleRefresh)
 
       // Compute instructor-specific counts directly from the database:
       // 1) count courses taught
@@ -158,11 +170,24 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
             if (a.due_date) a.due_date = new Date(a.due_date).toISOString();
           } catch (_) { /* leave as-is */ }
           if (a.course && !a.course.code) a.course.code = a.course.course_id || a.course.courseId || a.course.code;
+          // attach local YYYY-MM-DD key to avoid timezone issues when grouping
+          try {
+            const d = a.due_date ? new Date(a.due_date) : new Date();
+            const yy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            (a as any).local_date = `${yy}-${mm}-${dd}`;
+          } catch (_) { (a as any).local_date = null; }
           return a;
         });
 
+        // debug: log incoming and normalized assignments to help trace missing items
+        console.debug('dashboard: raw assignments payload', rawAssignments);
+        console.debug('dashboard: normalized assignments', assignments.map((x) => ({ id: x.id, due_date: x.due_date, local_date: (x as any).local_date })));
+
         const grouped = assignments.reduce((acc: Record<string, AssignmentWithCourse[]>, a: AssignmentWithCourse) => {
-          const date = new Date(a.due_date);
+          // group by a human-friendly local date string for display
+          const date = a.due_date ? new Date(a.due_date) : new Date();
           const dateStr = date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
           acc[dateStr] = acc[dateStr] || [];
           acc[dateStr].push(a);
@@ -175,6 +200,85 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
       console.error('fetchAssignments error', err);
     }
   };
+
+  // Fetch submissions for a given assignment (uses course submissions endpoint and filters by assignment_id)
+  async function openSubmissionsForAssignment(a: AssignmentWithCourse) {
+    setCurrentAssignment(a);
+    setSubmissionsForAssignment(null);
+    setSubmissionsModalOpen(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const instructorId = sessionData?.session?.user?.id;
+      if (!instructorId) throw new Error('Not authenticated');
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+      const res = await fetch(`${API_BASE}/users/courses/submissions/?course_db_id=${encodeURIComponent(String(a.course?.id ?? a.course?.code ?? ''))}&instructor_id=${encodeURIComponent(instructorId)}`);
+      const j = await res.json().catch(() => []);
+      const rows: any[] = Array.isArray(j) ? j : (j?.data ?? []);
+      // filter by assignment_id
+      const filtered = rows.filter((s: any) => String(s.assignment_id) === String(a.id));
+      setSubmissionsForAssignment(filtered);
+    } catch (err: any) {
+      console.error('openSubmissionsForAssignment failed', err);
+      setSubmissionsForAssignment([]);
+    }
+  }
+
+  function closeSubmissionsModal() {
+    setSubmissionsModalOpen(false);
+    setSubmissionsForAssignment(null);
+    setCurrentAssignment(null);
+  }
+
+  // Grade a specific submission (open modal)
+  function openGradeForSubmission(sub: any) {
+    setGradingSubmission(sub);
+    setGradeValue(sub.grade ?? '');
+    setGradeFeedback(sub.feedback ?? '');
+    setGradingError(null);
+    setGradeModalOpen(true);
+  }
+  function closeGradeModal() {
+    setGradeModalOpen(false);
+    setGradingSubmission(null);
+    setGradeValue('');
+    setGradeFeedback('');
+    setGradingError(null);
+  }
+  async function submitGradeForSubmission() {
+    if (!gradingSubmission || (!Number.isFinite(Number(gradeValue)) && gradeValue !== '')) {
+      setGradingError('Enter a numeric grade');
+      return;
+    }
+    setGradingLoading(true);
+    setGradingError(null);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const graderId = sessionData?.session?.user?.id;
+      if (!graderId) throw new Error('Not authenticated');
+      const payload = {
+        grader_id: graderId,
+        submission_id: gradingSubmission.id,
+        grade: Number(gradeValue),
+        feedback: gradeFeedback || null,
+      };
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+      const res = await fetch(`${API_BASE}/users/courses/submissions/grade/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || `Failed: ${res.status}`);
+      // refresh submissions list for current assignment
+      if (currentAssignment) await openSubmissionsForAssignment(currentAssignment);
+      closeGradeModal();
+    } catch (err: any) {
+      setGradingError(err?.message || String(err));
+    } finally {
+      setGradingLoading(false);
+    }
+  }
+  // --- end new helpers ---
 
   const statusColor = (status: string) => {
     switch (status) {
@@ -257,12 +361,20 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
     return d;
   });
 
-  const dateKey = (d: Date) => d.toISOString().slice(0, 10);
+  // Use local timezone date key (YYYY-MM-DD) to avoid UTC shifts hiding "tomorrow" due dates
+  const dateKey = (d: Date) => {
+    const yy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yy}-${mm}-${dd}`;
+  };
+  
   const assignmentsByDate = useMemo(() => {
     const map = new Map<string, AssignmentWithCourse[]>();
     groupedAssignments.forEach((g) => {
       g.assignments.forEach((a) => {
-        const key = dateKey(new Date(a.due_date));
+        // prefer precomputed local_date (safe) then fall back to computing from due_date
+        const key = (a as any).local_date ?? dateKey(new Date(a.due_date));
         const arr = map.get(key) ?? [];
         arr.push(a);
         map.set(key, arr);
@@ -270,6 +382,15 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
     });
     return map;
   }, [groupedAssignments]);
+
+  // only include next-7 days that actually have deadlines
+  const upcomingDeadlineDays = useMemo(() => {
+    return next7Days.filter((d) => {
+      const key = dateKey(d);
+      const list = assignmentsByDate.get(key) ?? [];
+      return list.length > 0;
+    });
+  }, [next7Days, assignmentsByDate]);
 
   function dayStatusFor(date: Date) {
     const key = dateKey(date);
@@ -470,7 +591,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
               </main>
 
               {/* Right column */}
-              <aside className="space-y-6">
+              <aside className="space-y-6 lg:sticky lg:top-6 min-h-0">
                 <div className="bg-white rounded-xl p-4 shadow-sm">
                   <div className="flex items-center gap-3">
                     <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-pink-500 rounded-full flex items-center justify-center text-white">
@@ -556,10 +677,6 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                   </div>
                 </div>
               </aside>
-            </div>
-
-            <div className="mt-8">
-              <ChatBox />
             </div>
           </>
         )}
