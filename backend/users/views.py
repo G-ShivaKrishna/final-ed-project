@@ -1148,3 +1148,45 @@ def list_course_submissions(request):
         logger.exception("list_course_submissions failed unexpectedly")
         # Return minimal error info to client but log full traceback for debugging
         return Response({"error": "internal_server_error", "details": str(e)}, status=500)
+
+
+@api_view(['POST'])
+def delete_assignment(request):
+    """
+    Delete an assignment (instructor only).
+    Body JSON: { assignment_id, instructor_id }
+    Returns: { result: "deleted" } on success.
+    """
+    data = request.data
+    assignment_id = data.get('assignment_id')
+    instructor_id = data.get('instructor_id')
+    if not assignment_id or not instructor_id:
+        return Response({"error": "assignment_id and instructor_id are required"}, status=400)
+
+    try:
+        # fetch assignment to get course_db_id
+        ass_resp = supabase.table('assignments').select('id, course_db_id').eq('id', assignment_id).execute()
+        if getattr(ass_resp, 'error', None):
+            return Response({"error": str(ass_resp.error)}, status=500)
+        assignment = _single_from_resp(ass_resp)
+        if not assignment:
+            return Response({"error": "assignment_not_found"}, status=404)
+
+        # verify instructor owns the course
+        course_resp = supabase.table('courses').select('id, instructor_id').eq('id', assignment.get('course_db_id')).execute()
+        if getattr(course_resp, 'error', None):
+            return Response({"error": str(course_resp.error)}, status=500)
+        course = _single_from_resp(course_resp)
+        if not course:
+            return Response({"error": "course_not_found"}, status=404)
+        if str(course.get('instructor_id')) != str(instructor_id):
+            return Response({"error": "forbidden"}, status=403)
+
+        # perform delete
+        del_resp = supabase.table('assignments').delete().eq('id', assignment_id).execute()
+        if getattr(del_resp, 'error', None):
+            return Response({"error": str(del_resp.error)}, status=500)
+
+        return Response({"result": "deleted"}, status=200)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)

@@ -26,4 +26,5 @@ urlpatterns = [
     # course resources (syllabus / videos)
     path('courses/resources/add/', views.add_course_resource, name='add_course_resource'),
     path('courses/resources/', views.list_course_resources, name='list_course_resources'),
+    path('courses/assignments/delete/', views.delete_assignment, name='delete_assignment'),
 ]

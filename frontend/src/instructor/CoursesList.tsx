@@ -35,6 +35,10 @@ export default function CoursesList(): JSX.Element {
   const [resources, setResources] = useState<any[] | null>(null);
   const [addAssignOpen, setAddAssignOpen] = useState(false);
   const [addResOpen, setAddResOpen] = useState(false);
+  // assignment edit state
+  const [editAssignOpen, setEditAssignOpen] = useState(false);
+  const [editingAssignment, setEditingAssignment] = useState<any | null>(null);
+  const [editAssignForm, setEditAssignForm] = useState({ title: '', description: '', due_date: '', points: '' });
   const [assignForm, setAssignForm] = useState({ title: '', description: '', due_date: '', points: '' });
   const [resForm, setResForm] = useState({ type: 'syllabus' as 'syllabus' | 'video', title: '', content: '', video_url: '' });
   // resource edit state
@@ -121,7 +125,7 @@ export default function CoursesList(): JSX.Element {
     // no teardown needed here
   }, []);
 
-  // delete course (instructor)
+  // delete course (instructor) — HTTP-only (backend handles verification & deletion)
   async function deleteCourse(course: Course) {
     const ok = window.confirm(`Delete course "${course.name}" (code ${course.course_id})? This cannot be undone.`);
     if (!ok) return;
@@ -292,6 +296,92 @@ export default function CoursesList(): JSX.Element {
       setAddAssignOpen(false);
       setAssignForm({ title: '', description: '', due_date: '', points: '' });
       setAssignFile(null);
+    } catch (err: any) {
+      setError(err?.message || String(err));
+    }
+  }
+
+  // open edit modal and prefill form
+  function openEditAssignment(a: any) {
+    setEditingAssignment(a);
+    setEditAssignForm({
+      title: a.title ?? '',
+      description: a.description ?? '',
+      // convert ISO -> datetime-local format if possible
+      due_date: a.due_date ? (() => {
+        try {
+          const dt = new Date(a.due_date);
+          const iso = dt.toISOString();
+          // return YYYY-MM-DDTHH:MM for datetime-local
+          return iso.slice(0, 16);
+        } catch { return ''; }
+      })() : '',
+      points: a.points ? String(a.points) : '',
+    });
+    setEditAssignOpen(true);
+  }
+
+  // update assignment via API
+  async function updateAssignment() {
+    if (!selectedCourse || !editingAssignment) return;
+    setError(null);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const instructorId = sessionData?.session?.user?.id;
+      if (!instructorId) throw new Error('Not authenticated');
+
+      const payload: any = {
+        instructor_id: instructorId,
+        assignment_id: editingAssignment.id,
+        title: editAssignForm.title,
+        description: editAssignForm.description,
+        points: editAssignForm.points ? Number(editAssignForm.points) : null,
+      };
+      if (editAssignForm.due_date) {
+        // datetime-local -> ISO
+        try { payload.due_date = new Date(editAssignForm.due_date).toISOString(); } catch { payload.due_date = null; }
+      } else {
+        payload.due_date = null;
+      }
+
+      const res = await fetch(`${API_BASE}/users/courses/assignments/update/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Update failed: ${res.status}`);
+
+      // refresh modal data and close editor
+      if (selectedCourse) await openCourseModal(selectedCourse);
+      setEditAssignOpen(false);
+      setEditingAssignment(null);
+    } catch (err: any) {
+      setError(err?.message || String(err));
+    }
+  }
+
+  // delete assignment via API — HTTP-only (backend handles validation)
+  async function deleteAssignment(a: any) {
+    if (!selectedCourse || !a) return;
+    const ok = window.confirm(`Delete assignment "${a.title}"? This cannot be undone.`);
+    if (!ok) return;
+    try {
+      setError(null);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const instructorId = sessionData?.session?.user?.id;
+      if (!instructorId) throw new Error('Not authenticated');
+
+      const res = await fetch(`${API_BASE}/users/courses/assignments/delete/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assignment_id: a.id, instructor_id: instructorId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Delete failed: ${res.status}`);
+
+      // refresh assignments list
+      await openCourseModal(selectedCourse);
     } catch (err: any) {
       setError(err?.message || String(err));
     }
@@ -549,7 +639,11 @@ export default function CoursesList(): JSX.Element {
                             return m ? <div className="text-xs mt-1"><a href={m[0]} target="_blank" rel="noreferrer" className="text-indigo-600">Download attachment</a></div> : null;
                           })()}
                         </div>
-                        <div className="text-xs text-slate-400">{a.points ? `${a.points} pts` : ''}</div>
+                        <div className="flex items-center gap-2">
+                          <div className="text-xs text-slate-400 mr-2">{a.points ? `${a.points} pts` : ''}</div>
+                          <button onClick={() => openEditAssignment(a)} className="text-sm px-2 py-1 border rounded-md bg-white text-indigo-600">Edit</button>
+                          <button onClick={() => deleteAssignment(a)} className="text-sm px-2 py-1 border rounded-md bg-white text-red-600">Delete</button>
+                        </div>
                       </div>
                       {/* render submissions for this assignment (if any) */}
                       <div className="mt-3">
@@ -695,6 +789,32 @@ export default function CoursesList(): JSX.Element {
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => setAddAssignOpen(false)} className="px-3 py-1 border rounded">Cancel</button>
               <button onClick={createAssignment} className="px-3 py-1 bg-indigo-600 text-white rounded">Create</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Assignment Modal */}
+      {editAssignOpen && editingAssignment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40 z-40" onClick={() => setEditAssignOpen(false)} />
+          <div className="relative bg-white rounded-lg shadow-lg w-full max-w-md p-6 z-50">
+            <h3 className="text-lg font-semibold mb-3">Edit assignment</h3>
+            <div className="space-y-2">
+              <input value={editAssignForm.title} onChange={(e) => setEditAssignForm((s) => ({ ...s, title: e.target.value }))} placeholder="Title" className="w-full border px-2 py-1 rounded" />
+              <input
+                type="datetime-local"
+                value={editAssignForm.due_date}
+                onChange={(e) => setEditAssignForm((s) => ({ ...s, due_date: e.target.value }))}
+                className="w-full border px-2 py-1 rounded"
+                aria-label="Due date and time"
+              />
+              <input value={editAssignForm.points} onChange={(e) => setEditAssignForm((s) => ({ ...s, points: e.target.value }))} placeholder="Points" className="w-full border px-2 py-1 rounded" />
+              <textarea value={editAssignForm.description} onChange={(e) => setEditAssignForm((s) => ({ ...s, description: e.target.value }))} placeholder="Description" className="w-full border px-2 py-2 rounded h-24" />
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setEditAssignOpen(false)} className="px-3 py-1 border rounded">Cancel</button>
+              <button onClick={updateAssignment} className="px-3 py-1 bg-indigo-600 text-white rounded">Save changes</button>
             </div>
           </div>
         </div>
