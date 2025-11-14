@@ -76,12 +76,60 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
         }
       }
 
-      // Reuse generic dashboard for counts if no instructor-specific API exists
-      const dashRes = await fetch(`${API_BASE}/users/dashboard/?user_id=${encodeURIComponent(userId)}`);
-      if (dashRes.ok) {
-        const json = await dashRes.json();
-        setCoursesCount(json.enrolled_courses ?? json.courses_taught ?? null);
-        setPendingGradingCount(json.assignments_due ?? json.pending_grading ?? null);
+      // Compute instructor-specific counts directly from the database:
+      // 1) count courses taught
+      try {
+        const { data: courseRows, error: courseErr } = await supabase
+          .from('courses')
+          .select('id')
+          .eq('instructor_id', userId);
+        if (!courseErr && Array.isArray(courseRows)) {
+          setCoursesCount(courseRows.length);
+        } else {
+          setCoursesCount(null);
+        }
+
+        // 2) count pending submissions to grade across the instructor's courses
+        let pending = 0;
+        const courseIds = Array.isArray(courseRows) ? courseRows.map((r: any) => r.id) : [];
+        if (courseIds.length > 0) {
+          // First try: submissions table has a course_id column
+          try {
+            const subsResp: any = await supabase
+              .from('submissions')
+              .select('id', { count: 'exact', head: false })
+              .in('course_id', courseIds)
+              .eq('status', 'submitted');
+            pending = Number(subsResp?.count ?? (Array.isArray(subsResp?.data) ? subsResp.data.length : 0));
+          } catch (_) {
+            pending = 0;
+          }
+
+          // Fallback: if submissions aren't stored per-course, try assignments -> submissions
+          if (!pending) {
+            try {
+              const ares: any = await supabase
+                .from('assignments')
+                .select('id')
+                .in('course_db_id', courseIds);
+              const assignmentIds = Array.isArray(ares?.data) ? ares.data.map((a: any) => a.id) : [];
+              if (assignmentIds.length > 0) {
+                const sres: any = await supabase
+                  .from('submissions')
+                  .select('id', { count: 'exact', head: false })
+                  .in('assignment_id', assignmentIds)
+                  .eq('status', 'submitted');
+                pending = Number(sres?.count ?? (Array.isArray(sres?.data) ? sres.data.length : 0));
+              }
+            } catch (_) {
+              // leave pending as-is (0) on error
+            }
+          }
+        }
+        setPendingGradingCount(Number.isFinite(pending) ? pending : null);
+      } catch (err) {
+        // If anything fails, leave the counts unchanged/null but log for debugging
+        console.error('compute instructor counts failed', err);
       }
     } catch (err) {
       console.error('fetchProfileSummary error', err);
@@ -237,9 +285,6 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
     <div className="flex flex-col gap-2">
       <button type="button" onClick={() => { navigate('/instructor-dashboard?view=courses'); setActiveView('courses'); }} className="text-left px-3 py-2 border rounded-md">My courses</button>
       <button type="button" onClick={() => { navigate('/instructor-dashboard?view=create'); setActiveView('create'); }} className="text-left px-3 py-2 border rounded-md">Create course</button>
-      <button type="button" onClick={() => { navigate('/instructor-dashboard?view=courses&open=addAssignment'); setActiveView('courses'); }} className="text-left px-3 py-2 border rounded-md">Add assignment</button>
-      <button type="button" onClick={() => { navigate('/instructor-dashboard?view=courses&open=addResource'); setActiveView('courses'); }} className="text-left px-3 py-2 border rounded-md">Add resource</button>
-      <button type="button" onClick={() => { navigate('/instructor-dashboard?view=courses&open=addResource&type=syllabus'); setActiveView('courses'); }} className="text-left px-3 py-2 border rounded-md">Add syllabus</button>
       <button onClick={() => navigate('/inbox')} className="text-left px-3 py-2 border rounded-md">Inbox</button>
     </div>
   );

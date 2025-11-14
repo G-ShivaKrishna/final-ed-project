@@ -377,23 +377,56 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
 
   function injectDarkStyles() {
     if (document.getElementById('dark-theme-overrides')) return;
+    // Use html.dark for scoping (document.documentElement gets .dark)
+    // Add conservative, specific overrides for common Tailwind utilities used in the app.
     const css = `
-      :root { color-scheme: dark; }
-      body, .min-h-screen { background-color: #0b1220 !important; color: #e6eef8 !important; }
-      .bg-white { background-color: #0b1220 !important; }
-      .bg-gray-50 { background-color: #071025 !important; }
-      .text-slate-500, .text-slate-400 { color: #94a3b8 !important; }
-      .text-slate-600, .text-slate-700 { color: #cbd5e1 !important; }
-      .text-slate-800, .text-slate-900 { color: #e6eef8 !important; }
-      .border { border-color: rgba(255,255,255,0.06) !important; }
-      .shadow, .shadow-sm, .shadow-md, .shadow-lg { box-shadow: none !important; }
-      .bg-indigo-600 { background-color: #4f46e5 !important; }
-      .bg-red-600 { background-color: #ef4444 !important; }
-      .bg-green-50 { background-color: #052e1f !important; }
-      .bg-blue-50 { background-color: #071633 !important; }
-      a { color: #7dd3fc !important; }
-      input, textarea { background-color: #071025 !important; color: #e6eef8 !important; border-color: rgba(255,255,255,0.06) !important; }
-      .bg-gradient-to-b { background-image: linear-gradient(180deg,#071025,#071025) !important; }
+      html.dark { color-scheme: dark; }
+      html.dark body, html.dark .min-h-screen { background-color: #071025 !important; color: #e6eef8 !important; }
+
+      /* Cards / surfaces */
+      html.dark .bg-white { background-color: #0f1724 !important; color: #e6eef8 !important; }
+      html.dark .bg-gray-50 { background-color: #071025 !important; }
+      html.dark .bg-gray-100 { background-color: #0b1320 !important; }
+      html.dark .bg-gray-200 { background-color: #0f1a2a !important; }
+
+      /* Text tokens */
+      html.dark .text-slate-500, html.dark .text-slate-400 { color: #97a9c2 !important; }
+      html.dark .text-slate-600, html.dark .text-slate-700 { color: #c3d3ea !important; }
+      html.dark .text-slate-800, html.dark .text-slate-900 { color: #e6eef8 !important; }
+
+      /* Borders & dividers */
+      html.dark .border { border-color: rgba(255,255,255,0.06) !important; }
+      html.dark .divide-y > :not([hidden]) ~ :not([hidden]) { border-color: rgba(255,255,255,0.04) !important; }
+
+      /* Shadows: keep subtle shadows for depth */
+      html.dark .shadow, html.dark .shadow-sm, html.dark .shadow-md, html.dark .shadow-lg { box-shadow: 0 6px 18px rgba(2,6,23,0.6) !important; }
+
+      /* Buttons / primary colors */
+      html.dark .bg-indigo-600 { background-color: #4f46e5 !important; }
+      html.dark .text-indigo-600 { color: #93c5fd !important; }
+      html.dark .bg-red-600 { background-color: #ef4444 !important; }
+      html.dark .bg-green-600 { background-color: #16a34a !important; }
+
+      /* Small utility colors used in status dots / badges */
+      html.dark .bg-green-50 { background-color: #052e1f !important; color: #86efac !important; }
+      html.dark .bg-blue-50 { background-color: #071633 !important; color: #93c5fd !important; }
+
+      /* Links and interactive elements */
+      html.dark a { color: #7dd3fc !important; text-decoration: underline; }
+      html.dark button, html.dark input, html.dark select, html.dark textarea { color: #e6eef8 !important; }
+
+      /* Inputs / textareas */
+      html.dark input, html.dark textarea { background-color: #0b1422 !important; border-color: rgba(255,255,255,0.06) !important; color: #e6eef8 !important; }
+      html.dark input::placeholder, html.dark textarea::placeholder { color: #7f97b0 !important; }
+
+      /* Background gradients */
+      html.dark .bg-gradient-to-b { background-image: linear-gradient(180deg,#071025,#071025) !important; }
+
+      /* Toggle / Switch adjustments */
+      html.dark .inline-flex.items-center.w-14.h-8 { background-color: #374151 !important; } /* fallback if used directly */
+
+      /* Keep any remaining overrides conservative */
+      html.dark .opacity-60 { opacity: 0.85 !important; }
     `;
     const s = document.createElement('style');
     s.id = 'dark-theme-overrides';
@@ -465,11 +498,11 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
             >
               <span className="sr-only">Toggle theme</span>
               {/* Sun icon (light) */}
-              <span className={`absolute left-2 top-1 transform transition-all duration-400 ${theme === 'dark' ? 'opacity-0 -translate-x-1 scale-90' : 'opacity-100 translate-x-0 scale-100'}`}>
+              <span className={`absolute left-2 top-1 transform transition-all duration-300 ${theme === 'dark' ? 'opacity-0 -translate-x-1 scale-90' : 'opacity-100 translate-x-0 scale-100'}`}>
                 <Sun size={14} className="text-yellow-400" />
               </span>
               {/* Moon icon (dark) */}
-              <span className={`absolute right-2 top-1 transform transition-all duration-400 ${theme === 'dark' ? 'opacity-100 translate-x-0 scale-100' : 'opacity-0 translate-x-1 scale-90'}`}>
+              <span className={`absolute right-2 top-1 transform transition-all duration-300 ${theme === 'dark' ? 'opacity-100 translate-x-0 scale-100' : 'opacity-0 translate-x-1 scale-90'}`}>
                 <Moon size={14} className="text-white" />
               </span>
               {/* Knob */}
@@ -510,6 +543,9 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
                   {joinLoading ? 'Requesting…' : 'Join'}
                 </button>
               </div>
+            </div>
+            <div className="border-l pl-4 hidden sm:block">
+              <button onClick={() => navigate('/courses')} className="text-left px-3 py-2 border rounded-md">View all courses</button>
             </div>
           </div>
         </div>
