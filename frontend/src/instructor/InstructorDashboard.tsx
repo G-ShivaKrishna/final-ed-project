@@ -809,6 +809,24 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
     return { label: 'Due', color: 'bg-yellow-50 text-yellow-700' };
   }
 
+  // Ready-to-grade list used by the "Ready to grade (past 7 days)" section
+  const readyToGradeAssignments = useMemo(() => {
+    const now = Date.now();
+    const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+    return groupedAssignments
+      .flatMap((g) => g.assignments)
+      .filter((a) => {
+        if (!a?.due_date || a.status === 'graded') return false;
+        const due = new Date(a.due_date).getTime();
+        if (!Number.isFinite(due)) return false;
+        if (!(due <= now && due >= weekAgo)) return false; // past due within last 7 days
+        const count = hasSubmissions[String(a.id)] ?? 0;
+        return count > 0 || a.status === 'submitted';
+      })
+      .sort((a, b) => new Date(b.due_date).getTime() - new Date(a.due_date).getTime())
+      .slice(0, 8);
+  }, [groupedAssignments, hasSubmissions]);
+
   const QuickActionButtons = () => (
     <div className="flex flex-col gap-2">
       {/* use normal navigation (push) so browser Back returns to the real previous page */}
@@ -820,113 +838,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
 
   const assignmentsOpen = false; // Instructor quick-view modal can be added later if needed
 
-  // theme state & helpers (same behavior as student dashboard)
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => (typeof window !== 'undefined' && localStorage.getItem('theme') === 'dark') ? 'dark' : 'light');
-
-  useEffect(() => {
-    try { applyTheme(theme); } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  function applyTheme(t: 'light' | 'dark') {
-    try {
-      if (t === 'dark') {
-        document.documentElement.classList.add('dark');
-        injectDarkStyles();
-      } else {
-        document.documentElement.classList.remove('dark');
-        removeDarkStyles();
-      }
-      localStorage.setItem('theme', t);
-      setTheme(t);
-    } catch (e) {}
-  }
-
-  function toggleTheme() { applyTheme(theme === 'dark' ? 'light' : 'dark'); }
-
-  function injectDarkStyles() {
-    if (document.getElementById('dark-theme-overrides')) return;
-    const css = `
-      :root { color-scheme: dark; }
-      body, .min-h-screen { background-color: #0b1220 !important; color: #e6eef8 !important; }
-      .bg-white { background-color: #0b1220 !important; }
-      .bg-gray-50 { background-color: #071025 !important; }
-      .text-slate-500, .text-slate-400 { color: #94a3b8 !important; }
-      .text-slate-600, .text-slate-700 { color: #cbd5e1 !important; }
-      .text-slate-800, .text-slate-900 { color: #e6eef8 !important; }
-      .border { border-color: rgba(255,255,255,0.06) !important; }
-      .shadow, .shadow-sm, .shadow-md, .shadow-lg { box-shadow: none !important; }
-      .bg-indigo-600 { background-color: #4f46e5 !important; }
-      .bg-red-600 { background-color: #ef4444 !important; }
-      .bg-green-50 { background-color: #052e1f !important; }
-      .bg-blue-50 { background-color: #071633 !important; }
-      a { color: #7dd3fc !important; }
-      input, textarea { background-color: #071025 !important; color: #e6eef8 !important; border-color: rgba(255,255,255,0.06) !important; }
-      .bg-gradient-to-b { background-image: linear-gradient(180deg,#071025,#071025) !important; }
-    `;
-    const s = document.createElement('style');
-    s.id = 'dark-theme-overrides';
-    s.innerHTML = css;
-    document.head.appendChild(s);
-  }
-
-  function removeDarkStyles() {
-    const el = document.getElementById('dark-theme-overrides');
-    if (el) el.remove();
-  }
-
-  // urgent assignments: due within next 48 hours and not graded (allow instructor to open & grade quickly)
-  const urgentAssignments = useMemo(() => {
-    const now = Date.now();
-    const windowMs = 48 * 60 * 60 * 1000; // 48 hours
-    return groupedAssignments
-      .flatMap((g) => g.assignments.map((a) => ({ ...a, groupDate: g.date })))
-      .filter((a) => {
-        try {
-          if (!a.due_date) return false;
-          const due = new Date(a.due_date).getTime();
-          if (!Number.isFinite(due)) return false;
-          const withinWindow = due >= now && due <= now + windowMs;
-          const needsAttention = a.status !== 'graded';
-          return withinWindow && needsAttention;
-        } catch {
-          return false;
-        }
-      })
-      .sort((x, y) => new Date(x.due_date).getTime() - new Date(y.due_date).getTime())
-      .slice(0, 4);
-  }, [groupedAssignments]);
-
-  const readyToGradeAssignments = useMemo(() => {
-    const now = Date.now();
-    const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
-    return groupedAssignments
-      .flatMap((g) => g.assignments)
-      .filter((a) => {
-        if (!a?.due_date || a.status === 'graded') return false;
-        const due = new Date(a.due_date).getTime();
-        if (!Number.isFinite(due)) return false;
-        // only past-due within the last 7 days
-        if (!(due <= now && due >= weekAgo)) return false;
-        // must have at least one submitted submission (or status already says submitted)
-        const count = hasSubmissions[String(a.id)] ?? 0;
-        return count > 0 || a.status === 'submitted';
-      })
-      // newest past-due first
-      .sort((a, b) => new Date(b.due_date).getTime() - new Date(a.due_date).getTime())
-      .slice(0, 8);
-  }, [groupedAssignments, hasSubmissions]);
-
-  // --- new recent-opened course tracking ---
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('instructor-recent-opened-courses');
-      if (stored) setRecentOpenedCourses(JSON.parse(stored));
-    } catch {
-      // ignore
-    }
-  }, []);
-
+  // Minimal helper to record opened course (used by navigation/submission open)
   const recordOpenedCourse = (course?: { id?: string | number; name?: string; title?: string; course_id?: string; code?: string }) => {
     if (!course?.id) return;
     const normalized = {
@@ -934,110 +846,72 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
       title: course.name ?? course.title ?? '',
       code: course.course_id ?? course.code ?? '',
     };
+    // update recentOpenedCourses locally and persist
     setRecentOpenedCourses((prev) => {
       const filtered = prev.filter((c) => String(c.id) !== String(normalized.id));
       const next = [normalized, ...filtered].slice(0, 4);
       try { localStorage.setItem('instructor-recent-opened-courses', JSON.stringify(next)); } catch {}
       return next;
     });
-    // If title missing, fetch it (one-shot) from courses table
-    if (!normalized.title) {
-      (async () => {
-        try {
-          const { data, error } = await supabase
-            .from('courses')
-            .select('name, course_id')
-            .eq('id', course.id)
-            .single();
-          if (!error && data?.name) {
-            setRecentOpenedCourses((prev) => {
-              const updated = prev.map((c) =>
-                String(c.id) === String(course.id) ? { ...c, title: data.name, code: c.code || data.course_id } : c
-              );
-              try { localStorage.setItem('instructor-recent-opened-courses', JSON.stringify(updated)); } catch {}
-              return updated;
-            });
-          }
-        } catch {}
-      })();
-    }
   };
-  // --- end new tracking ---
 
-  // Enrich already stored recentOpenedCourses that lack titles (e.g., persisted earlier only with code)
-  useEffect(() => {
-    const missing = recentOpenedCourses.filter((c) => !c.title);
-    if (missing.length === 0) return;
-    (async () => {
-      for (const m of missing) {
-        try {
-          const { data, error } = await supabase
-            .from('courses')
-            .select('name, course_id')
-            .eq('id', m.id)
-            .single();
-          if (!error && data?.name) {
-            setRecentOpenedCourses((prev) => {
-              const updated = prev.map((c) =>
-                String(c.id) === String(m.id) ? { ...c, title: data.name, code: c.code || data.course_id } : c
-              );
-              try { localStorage.setItem('instructor-recent-opened-courses', JSON.stringify(updated)); } catch {}
-              return updated;
-            });
-          }
-        } catch {}
-      }
-    })();
-  }, [recentOpenedCourses]);
-
-  // Navigate to a course and record it in "recently opened"
+  // Navigate to a course (Courses view) and auto-open it
   function goToCourse(course?: { id?: string | number; name?: string; title?: string; course_id?: string; code?: string }) {
     if (!course?.id) return;
-    const normalized = {
-      id: course.id,
-      title: course.name ?? course.title ?? '',
-      code: course.course_id ?? course.code ?? '',
-    };
-    try { recordOpenedCourse(course); } catch {}
-
-    // Navigate to the dashboard's courses view and include the course_db_id so CoursesList can auto-open it
-    // This avoids relying on /instructor/courses/manage/:id routes that may not exist.
-    const target = `/instructor-dashboard?view=courses&course_db_id=${encodeURIComponent(String(normalized.id))}`;
-    // ensure the dashboard switches to the courses view
+    recordOpenedCourse(course);
+    const target = `/instructor-dashboard?view=courses&course_db_id=${encodeURIComponent(String(course.id))}`;
     setActiveView('courses');
-    navigate(target, { state: { open_course_id: normalized.id } });
+    navigate(target, { state: { open_course_id: course.id } });
   }
 
-  // Navigate directly to an instructor submissions grading page for an assignment
+  // Navigate to submissions for an assignment (prefers Courses view with focus)
   function navigateToSubmissions(a: AssignmentWithCourse) {
     if (!a) return;
-    // Record the opened course for recent list
     recordOpenedCourse(a.course);
-
-    // Navigate to the dashboard's courses view and include the course_db_id so CoursesList can auto-open it.
-    // Also include the assignment id in navigation state as `focus_assignment_id` so the course view
-    // can optionally highlight or focus that assignment after opening.
     const courseId = a.course?.id;
     if (!courseId) {
-      // fallback to existing assignment-level route if course id missing
-      const primary = `/instructor/assignments/${a.id}/submissions`;
-      navigate(primary);
+      navigate(`/instructor/assignments/${a.id}/submissions`);
       return;
     }
-
     const target = `/instructor-dashboard?view=courses&course_db_id=${encodeURIComponent(String(courseId))}`;
     setActiveView('courses');
     navigate(target, { state: { open_course_id: courseId, focus_assignment_id: a.id } });
   }
 
+  // theme state (simplified)
+  const [theme, setTheme] = useState<'light' | 'dark'>(() =>
+    (typeof window !== 'undefined' && localStorage.getItem('theme') === 'dark') ? 'dark' : 'light'
+  );
+
+  // remove any leftover injected styles once (they were causing blank UI)
+  useEffect(() => {
+    ['dark-theme-overrides', 'light-theme-overrides'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.remove();
+    });
+  }, []);
+
+  // apply theme by toggling class only
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  function toggleTheme() {
+    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  }
+
   return (
-    // make top-level container and most text theme-aware so dark mode is consistent
-    <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-50 dark:from-slate-900 dark:to-slate-900 p-6 text-slate-800 dark:text-slate-100">
+    <div className="min-h-screen p-6 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100">
       <div className="max-w-7xl mx-auto">
         <header className="flex items-center justify-between mb-6">
           <div className="flex flex-col justify-center">
-            <h1 className="text-3xl font-semibold text-slate-800">Instructor dashboard</h1>
-            <p className="text-sm text-slate-500">Welcome back, {profileName ?? 'Instructor'}</p>
+            <h1 className="text-3xl font-semibold text-slate-900 dark:text-slate-100">Instructor dashboard</h1>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Welcome back, {profileName ?? 'Instructor'}</p>
           </div>
 
           <div className="flex items-center gap-3 relative">
@@ -1083,19 +957,18 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
           <CoursesList />
         ) : (
           <>
-            {/* Recent posts: latest assignments created */}
+            {/* Recent posts */}
             <div className="mb-6">
-              <h3 className="text-sm text-slate-600 font-medium mb-3">Recent posts</h3>
+              <h3 className="text-sm text-slate-600 dark:text-slate-400 font-medium mb-3">Recent posts</h3>
               <div className="flex flex-col sm:flex-row gap-3 items-stretch">
                 {recentPosts.map((p) => (
                   // card: use dark background + dark:border for consistent contrast
-                  <div key={p.id} className="bg-white dark:bg-slate-800 rounded-lg p-3 shadow-sm dark:shadow-none flex-1 min-w-0 border border-slate-200 dark:border-slate-700">
+                  <div key={p.id} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-lg p-3 flex-1 min-w-0">
                     <div className="flex items-start justify-between">
                       <div>
-                        <div className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">{p.title}</div>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">{p.title}</div>
                         <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{p.course?.code} • {formatDate(p.due_date)}</div>
                       </div>
-                      {/* status pill removed for instructor recent posts (instructor doesn't submit) */}
                     </div>
                   </div>
                 ))}
@@ -1107,25 +980,22 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
               {/* Main column */}
               <main className="lg:col-span-3">
                 {/* ready-to-grade card */}
-                <section className="bg-white dark:bg-slate-800 rounded-xl shadow-sm dark:shadow-none p-5 mb-6 border border-slate-200 dark:border-slate-700">
+                <section className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl p-5 mb-6">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-semibold text-slate-700">Ready to grade (past 7 days)</h3>
-                    <span className="text-xs text-slate-500">{readyToGradeAssignments.length} assignment{readyToGradeAssignments.length > 1 ? 's' : ''}</span>
+                    <h3 className="text-lg font-semibold text-slate-700 dark:text-slate-200">Ready to grade (past 7 days)</h3>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">{readyToGradeAssignments.length} assignment{readyToGradeAssignments.length > 1 ? 's' : ''}</span>
                   </div>
                   {readyToGradeAssignments.length === 0 ? (
                     <div className="mt-4 text-sm text-slate-500 dark:text-slate-400">No assignments are ready to grade yet.</div>
                   ) : (
                     <div className="mt-4 space-y-3">
                       {readyToGradeAssignments.map((a) => (
-                        <article key={`ready-${a.id}`} className="border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white dark:bg-slate-800">
+                        <article key={`ready-${a.id}`} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                           <div>
-                            <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">{a.title}</div>
+                            <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{a.title}</div>
                             <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{a.course?.code ?? '—'} • due {new Date(a.due_date).toLocaleString()}</div>
                           </div>
-                          <button
-                            onClick={() => navigateToSubmissions(a)}
-                            className="text-xs px-3 py-1 rounded-full border border-indigo-200 text-indigo-600 hover:bg-indigo-50"
-                          >
+                          <button className="text-xs px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 text-indigo-600 hover:bg-indigo-50">
                             Open submissions
                           </button>
                         </article>
@@ -1136,8 +1006,8 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
 
                 <div className="space-y-6">
                   {groupedAssignments.map((group) => (
-                    <section key={group.date} className="bg-white dark:bg-slate-800 rounded-xl shadow-sm dark:shadow-none p-5 border border-slate-200 dark:border-slate-700">
-                      <h3 className="text-sm text-slate-500 font-medium mb-4">{group.date}</h3>
+                    <section key={group.date} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl p-5">
+                      <h3 className="text-sm text-slate-500 dark:text-slate-400 font-medium mb-4">{group.date}</h3>
 
                       <div className="space-y-3">
                         {group.assignments.map((a) => (
@@ -1147,7 +1017,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                             <div className="flex-1">
                               <div className="flex items-start justify-between gap-4">
                                 <div>
-                                  <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">{a.title}</div>
+                                  <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{a.title}</div>
                                   <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{a.course?.code} • {formatDate(a.due_date)}</div>
                                 </div>
 
@@ -1159,7 +1029,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                                 </div>
                               </div>
 
-                              <div className="mt-3 flex items-center gap-3 text-sm text-slate-500">
+                              <div className="mt-3 flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
                                 <div className="flex items-center gap-1">
                                   <Clock size={14} />
                                   <span className="dark:text-slate-300">{new Date(a.due_date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
@@ -1191,8 +1061,8 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
               {/* Right column */}
               <aside className="space-y-6 lg:sticky lg:top-6 min-h-0">
                 {recentOpenedCourses.length > 0 && (
-                  <div className="bg-white rounded-xl p-4 shadow-sm">
-                    <h4 className="text-sm font-medium text-slate-700 mb-3">Recently opened</h4>
+                  <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl p-4">
+                    <h4 className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-3">Recently opened</h4>
                     <div className="flex flex-col gap-2">
                       {recentOpenedCourses.map((course) => (
                         <button
@@ -1210,14 +1080,14 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                   </div>
                 )}
 
-                <div className="bg-white rounded-xl p-4 shadow-sm">
+                <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl p-4">
                   <div className="flex items-center gap-3">
                     <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-pink-500 rounded-full flex items-center justify-center text-white">
                       <User size={20} />
                     </div>
                     <div>
-                      <div className="text-sm font-semibold text-slate-800">{profileName ?? 'Instructor'}</div>
-                      <div className="text-xs text-slate-500">{profileEmail ?? ''}</div>
+                      <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{profileName ?? 'Instructor'}</div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">{profileEmail ?? ''}</div>
                     </div>
                   </div>
 
@@ -1227,19 +1097,19 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                   </div>
 
                   <div className="mt-4 grid grid-cols-2 gap-3">
-                    <div className="p-3 bg-gray-50 rounded">
-                      <div className="text-xs text-slate-500">Courses taught</div>
-                      <div className="text-lg font-semibold text-slate-800">{typeof coursesCount === 'number' ? coursesCount : '—'}</div>
+                    <div className="p-3 bg-gray-50 dark:bg-slate-800/40 rounded border border-slate-200 dark:border-slate-700">
+                      <div className="text-xs text-slate-500 dark:text-slate-400">Courses taught</div>
+                      <div className="text-lg font-semibold text-slate-900 dark:text-slate-100">{typeof coursesCount === 'number' ? coursesCount : '—'}</div>
                     </div>
-                    <div className="p-3 bg-gray-50 rounded">
-                      <div className="text-xs text-slate-500">Pending grading</div>
-                      <div className="text-lg font-semibold text-slate-800">{typeof pendingGradingCount === 'number' ? pendingGradingCount : '—'}</div>
+                    <div className="p-3 bg-gray-50 dark:bg-slate-800/40 rounded border border-slate-200 dark:border-slate-700">
+                      <div className="text-xs text-slate-500 dark:text-slate-400">Pending grading</div>
+                      <div className="text-lg font-semibold text-slate-900 dark:text-slate-100">{typeof pendingGradingCount === 'number' ? pendingGradingCount : '—'}</div>
                     </div>
                   </div>
                 </div>
 
-                <div className="bg-white rounded-xl p-4 shadow-sm">
-                  <h4 className="text-sm font-medium text-slate-700 mb-3">Quick actions</h4>
+                <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl p-4">
+                  <h4 className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-3">Quick actions</h4>
                   <div className="flex flex-col gap-2">
                     {/* use push so Back goes to previous page */}
                     <button type="button" onClick={() => { navigate('/instructor-dashboard?view=create'); setActiveView('create'); }} className="text-left px-3 py-2 bg-indigo-600 text-white rounded-md">Create course</button>
@@ -1247,8 +1117,8 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                   </div>
                 </div>
 
-                <div className="bg-white rounded-xl p-4 shadow-sm">
-                  <h4 className="text-sm font-medium text-slate-700 mb-3">Calendar</h4>
+                <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl p-4">
+                  <h4 className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-3">Calendar</h4>
                   <div className="mt-2 grid grid-cols-7 gap-2 text-center text-xs">
                     {next7Days.map((d) => {
                       const key = dateKey(d);
@@ -1290,9 +1160,9 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                 </div>
 
                 <div className="hidden lg:block">
-                  <div className="bg-white rounded-xl p-4 shadow-sm">
-                    <h5 className="text-sm font-medium text-slate-700">Help & resources</h5>
-                    <p className="text-xs text-slate-500 mt-2">Visit our docs or contact support if you need help.</p>
+                 <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl p-4">
+                    <h5 className="text-sm font-medium text-slate-700 dark:text-slate-200">Help & resources</h5>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">Visit our docs or contact support if you need help.</p>
                   </div>
                 </div>
               </aside>
@@ -1301,47 +1171,51 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
         )}
 
         {/* Edit due modal */}
-         {editModalOpen && editingAssignment && (
+        {editModalOpen && editingAssignment && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
             <div className="absolute inset-0 bg-black/40" onClick={closeEditDue} />
-            {/* modal: ensure dark bg and readable text */}
-            <div className="relative bg-white dark:bg-slate-800 rounded-lg p-6 z-50 w-full max-w-md border border-slate-200 dark:border-slate-700">
- <h3 className="text-lg mb-2">Edit due date</h3>
- <div className="text-sm text-slate-600 dark:text-slate-400 mb-3">{editingAssignment.title}</div>
- <label className="block text-xs text-slate-600 mb-2">Due date and time</label>
-               <input
-                 type="datetime-local"
-                 value={editDueValue}
-                 onChange={(e) => setEditDueValue(e.target.value)}
-                 className="w-full border px-3 py-2 rounded mb-3"
-               />
+           <div className="relative bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-lg p-6 z-50 w-full max-w-md">
+              <h3 className="text-lg mb-2 text-slate-900 dark:text-slate-100">Edit due date</h3>
+             <div className="text-sm text-slate-600 dark:text-slate-400 mb-3">{editingAssignment.title}</div>
 
-               {/* NEW: file upload for assignment/syllabus */}
-               <label className="block text-xs text-slate-600 mb-2">Attach file (PDF)</label>
-               <div className="flex items-center gap-2 mb-2">
-                 <input type="file" accept="application/pdf" onChange={handleEditFileChange} className="block" />
-                 {editFileUploading && <div className="text-xs text-slate-500">Uploading…</div>}
-               </div>
-               {editFileError && <div className="text-xs text-red-600 mb-2">{editFileError}</div>}
-               <textarea
-                 readOnly
-                 value={editFileUrl}
-                 placeholder="Uploaded file URL will appear here"
-                 className="w-full border px-3 py-2 rounded mb-3 resize-y"
-                 rows={3}
-               />
+              <label className="block text-xs text-slate-600 mb-2">Due date and time</label>
+              <input
+                type="datetime-local"
+                value={editDueValue}
+                onChange={(e) => setEditDueValue(e.target.value)}
+                className="w-full border px-3 py-2 rounded mb-3"
+              />
 
-               {editError && <div className="text-xs text-red-600 mb-2">{editError}</div>}
-               <div className="flex justify-end gap-2">
-                 <button onClick={closeEditDue} className="px-3 py-1 border rounded">Cancel</button>
-                 <button onClick={submitEditDue} disabled={editLoading} className={`px-3 py-1 rounded ${editLoading ? 'bg-indigo-300 text-white' : 'bg-indigo-600 text-white'}`}>
+              <label className="block text-xs text-slate-600 mb-2">Attach file (PDF)</label>
+              <div className="flex items-center gap-2 mb-2">
+                <input type="file" accept="application/pdf" onChange={handleEditFileChange} className="block" />
+                {editFileUploading && <div className="text-xs text-slate-500">Uploading…</div>}
+              </div>
+              {editFileError && <div className="text-xs text-red-600 mb-2">{editFileError}</div>}
+              <textarea
+                readOnly
+                value={editFileUrl}
+                placeholder="Uploaded file URL will appear here"
+                className="w-full border px-3 py-2 rounded mb-3 resize-y"
+                rows={3}
+              />
+
+              {editError && <div className="text-xs text-red-600 mb-2">{editError}</div>}
+              <div className="flex justify-end gap-2">
+                <button onClick={closeEditDue} className="px-3 py-1 border rounded">Cancel</button>
+                <button
+                  onClick={submitEditDue}
+                  disabled={editLoading}
+                  className={`px-3 py-1 rounded ${editLoading ? 'bg-indigo-300 text-white' : 'bg-indigo-600 text-white'}`}
+                >
                   {editLoading ? 'Saving…' : 'Save'}
                 </button>
-               </div>
-             </div>
-           </div>
-         )}
-       </div>
-     </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>  
+    </div>  
   );
 }
