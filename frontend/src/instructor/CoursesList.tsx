@@ -359,11 +359,22 @@ export default function CoursesList(): JSX.Element {
       const instructorId = sessionData?.session?.user?.id;
       if (!instructorId) throw new Error('Not authenticated');
 
+      // NEW: optionally upload attached file and append its public URL into the description
+      let description = editAssignForm.description ?? '';
+      if (assignFile) {
+        setUploadingFile(true);
+        const pub = await uploadAssignmentFile(assignFile, selectedCourse.id);
+        setUploadingFile(false);
+        if (pub) description = `${description}\n\nAttachment: ${pub}`;
+        // clear assignFile after using it
+        setAssignFile(null);
+      }
+
       const payload: any = {
         instructor_id: instructorId,
         assignment_id: editingAssignment.id,
         title: editAssignForm.title,
-        description: editAssignForm.description,
+        description: description,
         points: editAssignForm.points ? Number(editAssignForm.points) : null,
       };
       if (editAssignForm.due_date) {
@@ -493,8 +504,22 @@ export default function CoursesList(): JSX.Element {
         title: editResForm.title,
         type: editResForm.type,
       };
-      if (editResForm.type === 'syllabus') payload.content = editResForm.content;
-      else payload.video_url = editResForm.video_url;
+
+      // NEW: if editing syllabus and a file was attached, upload and append into content
+      if (editResForm.type === 'syllabus') {
+        let content = editResForm.content ?? '';
+        if (resFile) {
+          setUploadingFile(true);
+          const pub = await uploadAssignmentFile(resFile, selectedCourse?.id ?? '');
+          setUploadingFile(false);
+          if (pub) content = `${content}\n\nAttachment: ${pub}`;
+          setResFile(null);
+        }
+        payload.content = content;
+      } else {
+        payload.video_url = editResForm.video_url;
+      }
+
       const res = await fetch(`${API_BASE}/users/courses/resources/update/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -508,59 +533,6 @@ export default function CoursesList(): JSX.Element {
       setEditingResource(null);
     } catch (err: any) {
       setError(err?.message || String(err));
-    }
-  }
-
-  function openGradeModal(sub: any) {
-    setGradingSubmission(sub);
-    setGradeValue(sub.grade ?? '');
-    setGradeFeedback(sub.feedback ?? '');
-    setGradingError(null);
-    setGradeModalOpen(true);
-  }
-
-  function closeGradeModal() {
-    setGradeModalOpen(false);
-    setGradingSubmission(null);
-    setGradeValue('');
-    setGradeFeedback('');
-    setGradingError(null);
-  }
-
-  async function submitGrade() {
-    if (!gradingSubmission || (!Number.isFinite(Number(gradeValue)) && gradeValue !== '')) {
-      setGradingError('Please enter a numeric grade.');
-      return;
-    }
-    setGradingLoading(true);
-    setGradingError(null);
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const graderId = sessionData?.session?.user?.id;
-      if (!graderId) throw new Error('Not authenticated');
-
-      const payload = {
-        grader_id: graderId,
-        submission_id: gradingSubmission.id,
-        grade: Number(gradeValue),
-        feedback: gradeFeedback || null,
-      };
-
-      const res = await fetch(`${API_BASE}/users/courses/submissions/grade/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body?.error || `Failed: ${res.status}`);
-
-      // refresh modal data
-      if (selectedCourse) await openCourseModal(selectedCourse);
-      closeGradeModal();
-    } catch (err: any) {
-      setGradingError(err?.message || String(err));
-    } finally {
-      setGradingLoading(false);
     }
   }
 
@@ -844,6 +816,15 @@ export default function CoursesList(): JSX.Element {
               />
               <input value={editAssignForm.points} onChange={(e) => setEditAssignForm((s) => ({ ...s, points: e.target.value }))} placeholder="Points" className="w-full border px-2 py-1 rounded" />
               <textarea value={editAssignForm.description} onChange={(e) => setEditAssignForm((s) => ({ ...s, description: e.target.value }))} placeholder="Description" className="w-full border px-2 py-2 rounded h-24" />
+
+              {/* NEW: add file upload control to Edit Assignment modal */}
+              <div>
+                <input ref={assignFileRef} type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={(e) => setAssignFile(e.target.files?.[0] ?? null)} />
+                <button type="button" onClick={() => assignFileRef.current?.click()} className="px-3 py-1 border rounded text-sm">
+                  {assignFile ? assignFile.name : 'Attach document (PDF/DOC)'}
+                </button>
+                {uploadingFile && <span className="text-xs text-slate-500 ml-2">Uploading…</span>}
+              </div>
             </div>
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => setEditAssignOpen(false)} className="px-3 py-1 border rounded">Cancel</button>
@@ -899,7 +880,17 @@ export default function CoursesList(): JSX.Element {
               </select>
               <input value={editResForm.title} onChange={(e) => setEditResForm((s) => ({ ...s, title: e.target.value }))} placeholder="Title" className="w-full border px-2 py-1 rounded" />
               {editResForm.type === 'syllabus' ? (
-                <textarea value={editResForm.content} onChange={(e) => setEditResForm((s) => ({ ...s, content: e.target.value }))} placeholder="Syllabus text" className="w-full border px-2 py-2 rounded h-28" />
+                <>
+                  <textarea value={editResForm.content} onChange={(e) => setEditResForm((s) => ({ ...s, content: e.target.value }))} placeholder="Syllabus text" className="w-full border px-2 py-2 rounded h-28" />
+                  {/* NEW: file upload for editing syllabus */}
+                  <div>
+                    <input ref={resFileRef} type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={(e) => setResFile(e.target.files?.[0] ?? null)} />
+                    <button type="button" onClick={() => resFileRef.current?.click()} className="px-3 py-1 border rounded text-sm">
+                      {resFile ? resFile.name : 'Attach syllabus document'}
+                    </button>
+                    {uploadingFile && <span className="text-xs text-slate-500 ml-2">Uploading…</span>}
+                  </div>
+                </>
               ) : (
                 <input value={editResForm.video_url} onChange={(e) => setEditResForm((s) => ({ ...s, video_url: e.target.value }))} placeholder="YouTube URL" className="w-full border px-2 py-1 rounded" />
               )}

@@ -60,6 +60,11 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
+  // NEW: file upload state for edit modal
+  const [editFileUploading, setEditFileUploading] = useState(false);
+  const [editFileUrl, setEditFileUrl] = useState<string>('');
+  const [editFileError, setEditFileError] = useState<string | null>(null);
+
   function openEditDue(a: AssignmentWithCourse) {
     setEditingAssignment(a);
     // try to set a suitable input default (local datetime)
@@ -75,7 +80,10 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
     } catch {
       setEditDueValue('');
     }
+    // pre-fill file URL if assignment already has one
+    setEditFileUrl((a as any)?.file_url ?? (a as any)?.submitted_file ?? '');
     setEditError(null);
+    setEditFileError(null);
     setEditModalOpen(true);
   }
 
@@ -85,6 +93,52 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
     setEditDueValue('');
     setEditError(null);
     setEditLoading(false);
+    setEditFileUploading(false);
+    setEditFileUrl('');
+    setEditFileError(null);
+  }
+
+  // NEW: upload helper used by instructor edit modal
+  async function uploadAssignmentFile(file: File) {
+    if (!file) return '';
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id ?? 'unknown';
+      const safe = file.name.replace(/\s+/g, '_');
+      const assignmentId = editingAssignment?.id ?? 'unassigned';
+      const path = `assignments/${assignmentId}/${userId}_${Date.now()}_${safe}`;
+      const { data, error } = await supabase.storage.from('assignments').upload(path, file, { upsert: true });
+      if (error) throw error;
+      const pub = await supabase.storage.from('assignments').getPublicUrl(path);
+      const publicUrl = (pub as any)?.data?.publicUrl || '';
+      return publicUrl;
+    } catch (e) {
+      console.warn('uploadAssignmentFile failed', e);
+      throw e;
+    }
+  }
+
+  // NEW: file input handler for edit modal
+  async function handleEditFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setEditFileError(null);
+    setEditFileUploading(true);
+    try {
+      // Basic validation: PDF only (adjust if other types allowed)
+      if (!(file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))) {
+        throw new Error('Please upload a PDF file.');
+      }
+      const url = await uploadAssignmentFile(file);
+      if (!url) throw new Error('Failed to obtain public URL for uploaded file.');
+      setEditFileUrl(url);
+    } catch (err: any) {
+      setEditFileError(err?.message || String(err));
+    } finally {
+      setEditFileUploading(false);
+      // reset input value so re-uploading same file is possible
+      if (e.target) { e.target.value = ''; }
+    }
   }
 
   async function submitEditDue() {
@@ -106,15 +160,16 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
     try {
       const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
       const id = String(editingAssignment.id);
-      const payload = { due_date: iso };
+      // include file_url when present
+      const payload = { due_date: iso, ...(editFileUrl ? { file_url: editFileUrl } : {}) };
       const headers = { 'Content-Type': 'application/json' };
 
       // Try common update endpoints in order (stop when one returns ok)
       const attempts = [
         { url: `${API_BASE}/users/courses/assignments/${id}/`, method: 'PATCH', body: payload },
         { url: `${API_BASE}/users/assignments/${id}/`, method: 'PATCH', body: payload },
-        { url: `${API_BASE}/users/courses/assignments/update/`, method: 'POST', body: { assignment_id: id, due_date: iso } },
-        { url: `${API_BASE}/users/assignments/update/`, method: 'POST', body: { assignment_id: id, due_date: iso } },
+        { url: `${API_BASE}/users/courses/assignments/update/`, method: 'POST', body: { assignment_id: id, ...payload } },
+        { url: `${API_BASE}/users/assignments/update/`, method: 'POST', body: { assignment_id: id, ...payload } },
       ];
 
       let success = false;
@@ -130,10 +185,8 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
             success = true;
             break;
           }
-          // if 404/405/400, capture and try next
           const txt = await res.text().catch(() => '');
           lastErr = `Endpoint ${at.url} failed: ${res.status} ${txt}`;
-          // continue trying next
         } catch (e) {
           lastErr = e;
         }
@@ -822,6 +875,22 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                 onChange={(e) => setEditDueValue(e.target.value)}
                 className="w-full border px-3 py-2 rounded mb-3"
               />
+
+              {/* NEW: file upload for assignment/syllabus */}
+              <label className="block text-xs text-slate-600 mb-2">Attach file (PDF)</label>
+              <div className="flex items-center gap-2 mb-2">
+                <input type="file" accept="application/pdf" onChange={handleEditFileChange} className="block" />
+                {editFileUploading && <div className="text-xs text-slate-500">Uploading…</div>}
+              </div>
+              {editFileError && <div className="text-xs text-red-600 mb-2">{editFileError}</div>}
+              <textarea
+                readOnly
+                value={editFileUrl}
+                placeholder="Uploaded file URL will appear here"
+                className="w-full border px-3 py-2 rounded mb-3 resize-y"
+                rows={3}
+              />
+
               {editError && <div className="text-xs text-red-600 mb-2">{editError}</div>}
               <div className="flex justify-end gap-2">
                 <button onClick={closeEditDue} className="px-3 py-1 border rounded">Cancel</button>
