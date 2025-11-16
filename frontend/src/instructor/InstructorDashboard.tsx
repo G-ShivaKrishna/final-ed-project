@@ -48,6 +48,8 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
   // Recent courses for quick access
   const [recentCourses, setRecentCourses] = useState<Array<{ id: string | number; title?: string; created_at?: string; code?: string; color?: string }>>([]);
 
+  const [recentOpenedCourses, setRecentOpenedCourses] = useState<Array<{ id: string | number; title?: string; code?: string }>>([]);
+
   // submissions / grading modal state (missing previously and caused runtime issues)
   const [currentAssignment, setCurrentAssignment] = useState<AssignmentWithCourse | null>(null);
   const [submissionsForAssignment, setSubmissionsForAssignment] = useState<any[] | null>(null);
@@ -61,6 +63,9 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
   const [gradingLoading, setGradingLoading] = useState(false);
   const [gradingError, setGradingError] = useState<string | null>(null);
   // --- end new state ---
+
+  // submitted counts per assignment used by "Ready to grade (past 7 days)"
+  const [hasSubmissions, setHasSubmissions] = useState<Record<string, number>>({});
 
   // --- New: edit-due state & helpers ---
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -403,6 +408,80 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
     }
   };
 
+  // Build grouped assignments from instructor's courses if API returns none
+  async function fetchAssignmentsFallbackFromSupabase() {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id;
+      if (!userId) return;
+
+      // 1) Instructor courses (map: id -> course_id for UI code)
+      const cr = await supabase
+        .from('courses')
+        .select('id, course_id, name')
+        .eq('instructor_id', userId);
+      const courses = Array.isArray(cr.data) ? cr.data : [];
+      const courseIds = courses.map((c: any) => c.id).filter(Boolean);
+      if (courseIds.length === 0) { setGroupedAssignments([]); return; }
+
+      const courseMap: Record<string, { id: string; code?: string; title?: string }> = {};
+      for (const c of courses) {
+        courseMap[String(c.id)] = { id: String(c.id), code: c.course_id, title: c.name };
+      }
+
+      // 2) Assignments under those courses
+      const ar = await supabase
+        .from('assignments')
+        .select('id, title, due_date, points, course_db_id')
+        .in('course_db_id', courseIds);
+      const assigns = Array.isArray(ar.data) ? ar.data : [];
+
+      // 3) Optional: detect pending submissions per assignment to set a useful status
+      //    We'll mark as "submitted" if there are any submissions with status=submitted.
+      const statusByAssignment: Record<string, string> = {};
+      for (const a of assigns) {
+        try {
+          const c = await supabase
+            .from('submissions')
+            .select('id', { count: 'exact', head: true })
+            .eq('assignment_id', a.id)
+            .eq('status', 'submitted');
+          const count = Number(c?.count ?? 0);
+          if (count > 0) statusByAssignment[String(a.id)] = 'submitted';
+        } catch {
+          // ignore per-assignment errors
+        }
+      }
+
+      // 4) Normalize and group like fetchAssignments does
+      const normalized = assigns.map((a: any) => {
+        let iso = '';
+        try { if (a.due_date) iso = new Date(a.due_date).toISOString(); } catch {}
+        const course = courseMap[String(a.course_db_id)] || undefined;
+        const status = statusByAssignment[String(a.id)] || 'open';
+        return {
+          id: a.id,
+          title: a.title,
+          due_date: iso,
+          status,
+          points: a.points ?? undefined,
+          course: course ? { id: course.id, code: course.code } : undefined,
+        } as AssignmentWithCourse;
+      });
+
+      const grouped = normalized.reduce((acc: Record<string, AssignmentWithCourse[]>, a) => {
+        const d = a.due_date ? new Date(a.due_date) : new Date();
+        const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+        (acc[dateStr] ||= []).push(a);
+        return acc;
+      }, {});
+      const groupedArr = Object.entries(grouped).map(([date, assignments]) => ({ date, assignments })) as GroupedAssignment[];
+      setGroupedAssignments(groupedArr);
+    } catch (e) {
+      console.warn('fallback assignments load failed', e);
+    }
+  }
+
   const fetchAssignments = async () => {
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -413,12 +492,14 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
       const res = await fetch(`${API_BASE}/users/dashboard/?user_id=${encodeURIComponent(userId)}`);
       if (!res.ok) {
         console.error('dashboard API error', res.status);
+        // Try Supabase fallback if API fails
+        await fetchAssignmentsFallbackFromSupabase();
         return;
       }
 
       const json = await res.json();
       const rawAssignments: AssignmentWithCourse[] = json.assignments || [];
-      if (rawAssignments) {
+      if (rawAssignments && rawAssignments.length > 0) {
         // normalize due_date -> ISO and ensure course.code exists
         const assignments = rawAssignments.map((a) => {
           try {
@@ -450,11 +531,65 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
         }, {} as Record<string, AssignmentWithCourse[]>);
         const groupedArr = Object.entries(grouped).map(([date, assignments]) => ({ date, assignments })) as GroupedAssignment[];
         setGroupedAssignments(groupedArr);
+      } else {
+        // API returned empty, try to populate from Supabase so dashboard has content
+        await fetchAssignmentsFallbackFromSupabase();
       }
     } catch (err) {
       console.error('fetchAssignments error', err);
+      // Network/parse error — still try fallback once
+      await fetchAssignmentsFallbackFromSupabase();
     }
   };
+
+  // Refresh per-assignment submitted counts for assignments due within the last 7 days
+  useEffect(() => {
+    const now = Date.now();
+    const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+    // collect candidate assignment IDs
+    const candidates = Array.from(
+      new Set(
+        groupedAssignments
+          .flatMap((g) => g.assignments)
+          .filter((a) => {
+            if (!a?.due_date) return false;
+            const due = new Date(a.due_date).getTime();
+            return Number.isFinite(due) && due <= now && due >= weekAgo;
+          })
+          .map((a) => String(a.id))
+      )
+    );
+    if (candidates.length === 0) {
+      setHasSubmissions({});
+      return;
+    }
+    // limit to a reasonable batch (avoid too many network calls)
+    const limited = candidates.slice(0, 50);
+    (async () => {
+      try {
+        const entries = await Promise.all(
+          limited.map(async (aid) => {
+            try {
+              const resp: any = await supabase
+                .from('submissions')
+                .select('id', { count: 'exact', head: true })
+                .eq('assignment_id', aid)
+                .eq('status', 'submitted');
+              const count = Number(resp?.count ?? 0);
+              return [aid, count] as const;
+            } catch {
+              return [aid, 0] as const;
+            }
+          })
+        );
+        const map: Record<string, number> = {};
+        for (const [aid, count] of entries) map[aid] = count;
+        setHasSubmissions(map);
+      } catch {
+        setHasSubmissions({});
+      }
+    })();
+  }, [groupedAssignments]);
 
   // Fetch submissions for a given assignment (directly from submissions table)
   async function openSubmissionsForAssignment(a: AssignmentWithCourse) {
@@ -473,9 +608,10 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
         setSubmissionsForAssignment([]);
         return;
       }
-      // Ensure we only expose the rows array
       const rows: any[] = Array.isArray(data) ? data : [];
       setSubmissionsForAssignment(rows);
+      // count as opened for its course
+      recordOpenedCourse(a.course);
     } catch (err: any) {
       console.error('openSubmissionsForAssignment failed', err);
       setSubmissionsForAssignment([]);
@@ -760,6 +896,59 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
       .slice(0, 4);
   }, [groupedAssignments]);
 
+  const readyToGradeAssignments = useMemo(() => {
+    const now = Date.now();
+    const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+    return groupedAssignments
+      .flatMap((g) => g.assignments)
+      .filter((a) => {
+        if (!a?.due_date || a.status === 'graded') return false;
+        const due = new Date(a.due_date).getTime();
+        if (!Number.isFinite(due)) return false;
+        // only past-due within the last 7 days
+        if (!(due <= now && due >= weekAgo)) return false;
+        // must have at least one submitted submission (or status already says submitted)
+        const count = hasSubmissions[String(a.id)] ?? 0;
+        return count > 0 || a.status === 'submitted';
+      })
+      // newest past-due first
+      .sort((a, b) => new Date(b.due_date).getTime() - new Date(a.due_date).getTime())
+      .slice(0, 8);
+  }, [groupedAssignments, hasSubmissions]);
+
+  // --- new recent-opened course tracking ---
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('instructor-recent-opened-courses');
+      if (stored) setRecentOpenedCourses(JSON.parse(stored));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const recordOpenedCourse = (course?: { id?: string | number; name?: string; title?: string; course_id?: string; code?: string }) => {
+    if (!course?.id) return;
+    const normalized = {
+      id: course.id,
+      title: course.name ?? course.title ?? '',
+      code: course.course_id ?? course.code ?? '',
+    };
+    setRecentOpenedCourses((prev) => {
+      const filtered = prev.filter((c) => String(c.id) !== String(normalized.id));
+      const next = [normalized, ...filtered].slice(0, 4);
+      try { localStorage.setItem('instructor-recent-opened-courses', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+  // --- end new tracking ---
+
+  // Navigate to a course and record it in "recently opened"
+  function goToCourse(course?: { id?: string | number; name?: string; title?: string; course_id?: string; code?: string }) {
+    if (!course?.id) return;
+    try { recordOpenedCourse(course); } catch {}
+    navigate(`/courses/${course.id}`);
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
@@ -832,50 +1021,32 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
               {/* Main column */}
               <main className="lg:col-span-3">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h2 className="text-xl font-medium text-slate-700">Upcoming due dates</h2>
-                    <div className="flex items-center gap-2 text-sm text-slate-500">
-                      <Calendar size={16} />
-                      <span>Sorted by due date</span>
+                <section className="bg-white rounded-xl shadow-sm p-5 mb-6">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold text-slate-700">Ready to grade (past 7 days)</h3>
+                    <span className="text-xs text-slate-500">{readyToGradeAssignments.length} assignment{readyToGradeAssignments.length > 1 ? 's' : ''}</span>
+                  </div>
+                  {readyToGradeAssignments.length === 0 ? (
+                    <div className="mt-4 text-sm text-slate-500">No assignments are ready to grade yet.</div>
+                  ) : (
+                    <div className="mt-4 space-y-3">
+                      {readyToGradeAssignments.map((a) => (
+                        <article key={`ready-${a.id}`} className="border border-slate-200 rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-800">{a.title}</div>
+                            <div className="text-xs text-slate-500 mt-1">{a.course?.code ?? '—'} • due {new Date(a.due_date).toLocaleString()}</div>
+                          </div>
+                          <button
+                            onClick={() => openSubmissionsForAssignment(a)}
+                            className="text-xs px-3 py-1 rounded-full border border-indigo-200 text-indigo-600 hover:bg-indigo-50"
+                          >
+                            Open submissions
+                          </button>
+                        </article>
+                      ))}
                     </div>
-                  </div>
-
-                  {/* Right-side quick area: recent course + urgent assignments */}
-                  <div className="flex items-center gap-4">
-                    {/* recently created course */}
-                    {recentCourses.length > 0 && (
-                      <div className="bg-white border rounded-md px-3 py-2 text-sm shadow-sm flex items-center gap-3">
-                        <div className="text-xs text-slate-500">New course</div>
-                        <button
-                          onClick={() => navigate(`/courses/${recentCourses[0].id}`)}
-                          className="text-sm font-semibold text-indigo-600 hover:underline"
-                        >
-                          {recentCourses[0].title ?? `Course ${recentCourses[0].id}`}
-                        </button>
-                      </div>
-                    )}
-
-                    {/* urgent assignments near deadline */}
-                    {urgentAssignments.length > 0 && (
-                      <div className="bg-white border rounded-md px-3 py-2 text-sm shadow-sm">
-                        <div className="text-xs text-slate-500 mb-1">Near deadline</div>
-                        <div className="flex gap-2">
-                          {urgentAssignments.map((a) => (
-                            <button
-                              key={a.id}
-                              onClick={() => openSubmissionsForAssignment(a)}
-                              title={`Open submissions for ${a.title}`}
-                              className="px-2 py-1 rounded bg-yellow-50 text-yellow-800 border text-xs hover:bg-yellow-100"
-                            >
-                              {a.course?.code ?? ''} · {a.title ? (a.title.length > 18 ? a.title.slice(0, 15) + '…' : a.title) : `#${a.id}`}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                  )}
+                </section>
 
                 <div className="space-y-6">
                   {groupedAssignments.map((group) => (
@@ -914,7 +1085,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                                   <span>{a.completed_items ?? 0} items</span>
                                 </div>
 
-                                <button onClick={() => navigate(`/courses/${a.course?.id}`)} className="ml-auto text-sm text-indigo-600 hover:underline">View submissions</button>
+                                <button onClick={() => goToCourse(a.course)} className="ml-auto text-sm text-indigo-600 hover:underline">View submissions</button>
 
                                 {/* Edit due date (instructor) */}
                                 <button
@@ -936,6 +1107,24 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
 
               {/* Right column */}
               <aside className="space-y-6 lg:sticky lg:top-6 min-h-0">
+                {recentOpenedCourses.length > 0 && (
+                  <div className="bg-white rounded-xl p-4 shadow-sm">
+                    <h4 className="text-sm font-medium text-slate-700 mb-3">Recently opened</h4>
+                    <div className="flex flex-col gap-2">
+                      {recentOpenedCourses.map((course) => (
+                        <button
+                          key={`opened-${course.id}`}
+                          onClick={() => navigate(`/courses/${course.id}`)}
+                          className="w-full text-left px-3 py-2 rounded-md border border-slate-100 text-sm text-slate-700 hover:bg-slate-50"
+                        >
+                          <div className="font-semibold">{course.title || `Course ${course.id}`}</div>
+                          <div className="text-xs text-slate-400">{course.code}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="bg-white rounded-xl p-4 shadow-sm">
                   <div className="flex items-center gap-3">
                     <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-pink-500 rounded-full flex items-center justify-center text-white">
