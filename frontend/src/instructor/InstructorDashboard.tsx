@@ -1117,7 +1117,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                             <div className="text-xs text-slate-500 mt-1">{a.course?.code ?? '—'} • due {new Date(a.due_date).toLocaleString()}</div>
                           </div>
                           <button
-                            onClick={() => openSubmissionsForAssignment(a)}
+                            onClick={() => navigateToSubmissions(a)}
                             className="text-xs px-3 py-1 rounded-full border border-indigo-200 text-indigo-600 hover:bg-indigo-50"
                           >
                             Open submissions
@@ -1146,9 +1146,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                                 </div>
 
                                 <div className="flex flex-col items-end gap-2">
-                                  <div className={`px-3 py-1 text-xs rounded-full border ${statusColor(a.status)}`}>{a.status}</div>
-                                  <div className="text-xs text-slate-400">{a.points} pts</div>
-                                  {/* Show overdue marker for instructor view */}
+                                  {/* Keep only overdue marker; status pill and points removed */}
                                   {isPastDue(a) && a.status !== 'submitted' && a.status !== 'graded' && (
                                     <div className="mt-1 text-xs text-red-600 font-medium">Deadline passed</div>
                                   )}
@@ -1173,15 +1171,6 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                                   title="Open grading view"
                                 >
                                   Grade
-                                </button>
-
-                                {/* Edit due date (instructor) */}
-                                <button
-                                  onClick={() => openEditDue(a)}
-                                  className="ml-2 text-sm px-2 py-1 border rounded text-slate-700 hover:bg-slate-50"
-                                  title="Edit due date"
-                                >
-                                  Edit due
                                 </button>
                               </div>
                             </div>
