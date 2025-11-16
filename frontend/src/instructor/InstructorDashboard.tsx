@@ -883,26 +883,89 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
     (typeof window !== 'undefined' && localStorage.getItem('theme') === 'dark') ? 'dark' : 'light'
   );
 
-  // remove any leftover injected styles once (they were causing blank UI)
+  // apply student-style theme (inject overrides + toggle html.dark)
   useEffect(() => {
-    ['dark-theme-overrides', 'light-theme-overrides'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.remove();
-    });
-  }, []);
-
-  // apply theme by toggling class only
-  useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-    localStorage.setItem('theme', theme);
+    try { applyTheme(theme); } catch {}
   }, [theme]);
 
   function toggleTheme() {
     setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  }
+
+  // Student-style theme helpers
+  function applyTheme(t: 'light' | 'dark') {
+    try {
+      if (t === 'dark') {
+        removeLightStyles();
+        document.documentElement.classList.add('dark');
+        injectDarkStyles();
+      } else {
+        document.documentElement.classList.remove('dark');
+        removeDarkStyles();
+        injectLightStyles();
+        // ensure page background matches student light theme
+        document.body.style.backgroundColor = '#f9fafb';
+        document.documentElement.style.backgroundColor = '#f9fafb';
+      }
+      localStorage.setItem('theme', t);
+    } catch {}
+  }
+
+  function injectDarkStyles() {
+    if (document.getElementById('dark-theme-overrides')) return;
+    const css = `
+      :root { color-scheme: dark; }
+      body, .min-h-screen { background-color: #0b1220 !important; color: #e6eef8 !important; }
+      .bg-white { background-color: #0b1220 !important; }
+      .bg-gray-50 { background-color: #071025 !important; }
+      .text-slate-500, .text-slate-400 { color: #94a3b8 !important; }
+      .text-slate-600, .text-slate-700 { color: #cbd5e1 !important; }
+      .text-slate-800, .text-slate-900 { color: #e6eef8 !important; }
+      .border { border-color: rgba(255,255,255,0.06) !important; }
+      .shadow, .shadow-sm, .shadow-md, .shadow-lg { box-shadow: none !important; }
+      .bg-indigo-600 { background-color: #4f46e5 !important; }
+      .bg-red-600 { background-color: #ef4444 !important; }
+      .bg-green-50 { background-color: #052e1f !important; }
+      .bg-blue-50 { background-color: #071633 !important; }
+      a { color: #7dd3fc !important; }
+      input, textarea { background-color: #071025 !important; color: #e6eef8 !important; border-color: rgba(255,255,255,0.06) !important; }
+      .bg-gradient-to-b { background-image: linear-gradient(180deg,#071025,#071025) !important; }
+    `;
+    const s = document.createElement('style');
+    s.id = 'dark-theme-overrides';
+    s.innerHTML = css;
+    document.head.appendChild(s);
+  }
+
+  function removeDarkStyles() {
+    const el = document.getElementById('dark-theme-overrides');
+    if (el) el.remove();
+  }
+
+  function injectLightStyles() {
+    if (document.getElementById('light-theme-overrides')) return;
+    const css = `
+      body, .min-h-screen { background: #f9fafb !important; color: #1e293b !important; }
+      .bg-gray-50 { background-color: #f1f5f9 !important; }
+      .bg-white { background-color: #ffffff !important; }
+      .text-slate-800, .text-slate-900 { color: #1e293b !important; }
+      .text-slate-700 { color: #334155 !important; }
+      .text-slate-600 { color: #475569 !important; }
+      .text-slate-500, .text-slate-400 { color: #64748b !important; }
+      .border, .border-slate-200 { border-color: #e2e8f0 !important; }
+      .shadow-none, .shadow-sm { box-shadow: 0 1px 2px rgba(0,0,0,0.04) !important; }
+      input, textarea { background:#ffffff !important; color:#1e293b !important; border-color:#cbd5e1 !important; }
+      .light-surface { background:#f9fafb !important; }
+    `;
+    const s = document.createElement('style');
+    s.id = 'light-theme-overrides';
+    s.innerHTML = css;
+    document.head.appendChild(s);
+  }
+
+  function removeLightStyles() {
+    const el = document.getElementById('light-theme-overrides');
+    if (el) el.remove();
   }
 
   return (
