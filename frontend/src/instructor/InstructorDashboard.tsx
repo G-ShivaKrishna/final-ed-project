@@ -939,14 +939,88 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
       try { localStorage.setItem('instructor-recent-opened-courses', JSON.stringify(next)); } catch {}
       return next;
     });
+    // If title missing, fetch it (one-shot) from courses table
+    if (!normalized.title) {
+      (async () => {
+        try {
+          const { data, error } = await supabase
+            .from('courses')
+            .select('name, course_id')
+            .eq('id', course.id)
+            .single();
+          if (!error && data?.name) {
+            setRecentOpenedCourses((prev) => {
+              const updated = prev.map((c) =>
+                String(c.id) === String(course.id) ? { ...c, title: data.name, code: c.code || data.course_id } : c
+              );
+              try { localStorage.setItem('instructor-recent-opened-courses', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          }
+        } catch {}
+      })();
+    }
   };
   // --- end new tracking ---
+
+  // Enrich already stored recentOpenedCourses that lack titles (e.g., persisted earlier only with code)
+  useEffect(() => {
+    const missing = recentOpenedCourses.filter((c) => !c.title);
+    if (missing.length === 0) return;
+    (async () => {
+      for (const m of missing) {
+        try {
+          const { data, error } = await supabase
+            .from('courses')
+            .select('name, course_id')
+            .eq('id', m.id)
+            .single();
+          if (!error && data?.name) {
+            setRecentOpenedCourses((prev) => {
+              const updated = prev.map((c) =>
+                String(c.id) === String(m.id) ? { ...c, title: data.name, code: c.code || data.course_id } : c
+              );
+              try { localStorage.setItem('instructor-recent-opened-courses', JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          }
+        } catch {}
+      }
+    })();
+  }, [recentOpenedCourses]);
 
   // Navigate to a course and record it in "recently opened"
   function goToCourse(course?: { id?: string | number; name?: string; title?: string; course_id?: string; code?: string }) {
     if (!course?.id) return;
     try { recordOpenedCourse(course); } catch {}
-    navigate(`/courses/${course.id}`);
+    // Instructor management page path (adjust if your router uses a different one)
+    // Preferred pattern: /instructor/courses/manage/:id
+    const managePathPrimary = `/instructor/courses/manage/${course.id}`;
+    // Fallback pattern if primary route not defined: /instructor/courses/${course.id}
+    const fallbackPath = `/instructor/courses/${course.id}`;
+    // Try primary; if navigation fails you can change to fallback.
+    navigate(managePathPrimary);
+  }
+
+  // Navigate directly to an instructor submissions grading page for an assignment
+  function navigateToSubmissions(a: AssignmentWithCourse) {
+    if (!a) return;
+    recordOpenedCourse(a.course);
+    const before = location.pathname;
+    const primary = `/instructor/assignments/${a.id}/submissions`;
+    const altCourse = a.course?.id ? `/instructor/courses/manage/${a.course.id}` : null;
+    const fallbackStudent = a.course?.id ? `/courses/${a.course.id}` : null;
+    navigate(primary);
+    // After a short delay, if path unchanged, fall back progressively
+    setTimeout(() => {
+      if (location.pathname === before) {
+        if (altCourse) {
+          navigate(altCourse);
+        } else if (fallbackStudent) {
+          navigate(fallbackStudent);
+        }
+      }
+    }, 50);
   }
 
   return (
@@ -1086,6 +1160,14 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                                 </div>
 
                                 <button onClick={() => goToCourse(a.course)} className="ml-auto text-sm text-indigo-600 hover:underline">View submissions</button>
+                                {/* Replace course-level navigation with assignment submissions navigation */}
+                                <button
+                                  onClick={() => navigateToSubmissions(a)}
+                                  className="ml-2 text-sm text-indigo-600 underline hover:no-underline"
+                                  title="Open grading view"
+                                >
+                                  Grade
+                                </button>
 
                                 {/* Edit due date (instructor) */}
                                 <button
@@ -1114,10 +1196,12 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                       {recentOpenedCourses.map((course) => (
                         <button
                           key={`opened-${course.id}`}
-                          onClick={() => navigate(`/courses/${course.id}`)}
+                          onClick={() => goToCourse(course)}
                           className="w-full text-left px-3 py-2 rounded-md border border-slate-100 text-sm text-slate-700 hover:bg-slate-50"
                         >
-                          <div className="font-semibold">{course.title || `Course ${course.id}`}</div>
+                          <div className="font-semibold">
+                            {course.title ? course.title : `Course ${course.id}`}
+                          </div>
                           <div className="text-xs text-slate-400">{course.code}</div>
                         </button>
                       ))}
