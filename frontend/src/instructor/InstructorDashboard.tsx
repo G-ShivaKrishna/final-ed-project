@@ -38,11 +38,20 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
 
   const [profileName, setProfileName] = useState<string | null>(null);
   const [profileEmail, setProfileEmail] = useState<string | null>(null);
-  const [coursesCount, setCoursesCount] = useState<number | null>(null);
-  const [pendingGradingCount, setPendingGradingCount] = useState<number | null>(null);
+  // keep counts numeric so UI shows 0 instead of disappearing/— when nothing found
+  const [coursesCount, setCoursesCount] = useState<number>(0);
+  const [pendingGradingCount, setPendingGradingCount] = useState<number>(0);
 
   const [groupedAssignments, setGroupedAssignments] = useState<GroupedAssignment[]>([]);
   const [activeView, setActiveView] = useState('dashboard');
+
+  // Recent courses for quick access
+  const [recentCourses, setRecentCourses] = useState<Array<{ id: string | number; title?: string; created_at?: string; code?: string; color?: string }>>([]);
+
+  // submissions / grading modal state (missing previously and caused runtime issues)
+  const [currentAssignment, setCurrentAssignment] = useState<AssignmentWithCourse | null>(null);
+  const [submissionsForAssignment, setSubmissionsForAssignment] = useState<any[] | null>(null);
+  const [submissionsModalOpen, setSubmissionsModalOpen] = useState(false);
 
   // grading modal state
   const [gradeModalOpen, setGradeModalOpen] = useState(false);
@@ -221,6 +230,11 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [/* run on mount and when location.search changes */ location.search]);
 
+  // Avoid retrying an explicit-column query that caused a 42703 (column not found).
+  // Once we detect such a schema mismatch, we switch to a safe select('*') and only log once.
+  const preferSafeCourseSelectRef = useRef<boolean>(false);
+  const loggedCourseSelectErrorRef = useRef<boolean>(false);
+
   const fetchProfileSummary = async () => {
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -240,61 +254,148 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
       }
 
       // Ensure pending submissions refreshed when refreshing profile summary
-      // (fetchPendingSubmissions is called on mount and in handleRefresh)
-
-      // Compute instructor-specific counts directly from the database:
-      // 1) count courses taught
+      // Compute instructor-specific counts robustly using the submissions table schema you provided:
       try {
-        const { data: courseRows, error: courseErr } = await supabase
-          .from('courses')
-          .select('id')
-          .eq('instructor_id', userId);
-        if (!courseErr && Array.isArray(courseRows)) {
-          setCoursesCount(courseRows.length);
-        } else {
-          setCoursesCount(null);
-        }
-
-        // 2) count pending submissions to grade across the instructor's courses
-        let pending = 0;
-        const courseIds = Array.isArray(courseRows) ? courseRows.map((r: any) => r.id) : [];
-        if (courseIds.length > 0) {
-          // First try: submissions table has a course_id column
-          try {
-            const subsResp: any = await supabase
-              .from('submissions')
-              .select('id', { count: 'exact', head: false })
-              .in('course_id', courseIds)
-              .eq('status', 'submitted');
-            pending = Number(subsResp?.count ?? (Array.isArray(subsResp?.data) ? subsResp.data.length : 0));
-          } catch (_) {
-            pending = 0;
-          }
-
-          // Fallback: if submissions aren't stored per-course, try assignments -> submissions
-          if (!pending) {
-            try {
-              const ares: any = await supabase
-                .from('assignments')
-                .select('id')
-                .in('course_db_id', courseIds);
-              const assignmentIds = Array.isArray(ares?.data) ? ares.data.map((a: any) => a.id) : [];
-              if (assignmentIds.length > 0) {
-                const sres: any = await supabase
-                  .from('submissions')
-                  .select('id', { count: 'exact', head: false })
-                  .in('assignment_id', assignmentIds)
-                  .eq('status', 'submitted');
-                pending = Number(sres?.count ?? (Array.isArray(sres?.data) ? sres.data.length : 0));
+        // fetch courses (try rich select once, then fall back — existing logic using preferSafeCourseSelectRef)
+        let courseRows: any[] = [];
+        let hasMeta = false;
+        try {
+          if (!preferSafeCourseSelectRef.current) {
+            // use schema that matches your DB: name and course_id (no `color` column)
+            const rich: any = await supabase
+              .from('courses')
+              .select('id, name, created_at, course_id')
+              .eq('instructor_id', userId);
+            if (!rich?.error && Array.isArray(rich?.data) && rich.data.length > 0) {
+              courseRows = rich.data;
+              hasMeta = true;
+            } else if (rich?.error) {
+              // If the error indicates a missing column (42703), switch to safe select(*) for subsequent calls
+              if (rich.error?.code === '42703') {
+                preferSafeCourseSelectRef.current = true;
+                if (!loggedCourseSelectErrorRef.current) {
+                  // log once to help debugging, but avoid flooding the console
+                  console.warn('explicit courses select failed (missing column); switching to select(*). Error:', rich.error);
+                  loggedCourseSelectErrorRef.current = true;
+                }
+              } else {
+                console.warn('supabase rich courses query error', rich.error);
               }
-            } catch (_) {
-              // leave pending as-is (0) on error
             }
           }
+
+          if ((!Array.isArray(courseRows) || courseRows.length === 0) && preferSafeCourseSelectRef.current) {
+            try {
+              const safe: any = await supabase
+                .from('courses')
+                .select('*')
+                .eq('instructor_id', userId);
+              if (!safe?.error && Array.isArray(safe?.data) && safe.data.length > 0) {
+                courseRows = safe.data;
+                hasMeta = courseRows.some((r: any) => r.name || r.course_id || r.created_at);
+              } else if (safe?.error) {
+                if (!loggedCourseSelectErrorRef.current) {
+                  console.warn('safe select(*) for courses returned error', safe.error);
+                  loggedCourseSelectErrorRef.current = true;
+                }
+              }
+            } catch (e) {
+              if (!loggedCourseSelectErrorRef.current) {
+                console.warn('safe select(*) for courses failed', e);
+                loggedCourseSelectErrorRef.current = true;
+              }
+            }
+          }
+
+          if ((!Array.isArray(courseRows) || courseRows.length === 0)) {
+            try {
+              const minimal: any = await supabase
+                .from('courses')
+                .select('id')
+                .eq('instructor_id', userId);
+              if (!minimal?.error && Array.isArray(minimal?.data)) {
+                courseRows = minimal.data;
+              }
+            } catch (e) {
+              console.warn('minimal courses select failed', e);
+              courseRows = [];
+            }
+          }
+        } catch (e) {
+          console.warn('unexpected error while fetching courses', e);
+          courseRows = [];
         }
-        setPendingGradingCount(Number.isFinite(pending) ? pending : null);
+
+        setCoursesCount(Array.isArray(courseRows) ? courseRows.length : 0);
+
+        // map DB fields into UI shape (title/code)
+        if (Array.isArray(courseRows) && courseRows.length > 0) {
+          const hasCreatedAt = courseRows.some((r: any) => Boolean(r.created_at));
+          const mapped = [...courseRows].map((r: any) => ({
+            id: r.id,
+            title: r.name ?? r.title ?? undefined,
+            created_at: r.created_at,
+            code: r.course_id ?? r.code ?? undefined,
+            color: r.color,
+          }));
+          if (hasCreatedAt) {
+            try {
+              const sorted = mapped.sort((a: any, b: any) => {
+                const ta = new Date(a.created_at || 0).getTime();
+                const tb = new Date(b.created_at || 0).getTime();
+                return tb - ta;
+              });
+              setRecentCourses(sorted.slice(0, 3));
+            } catch {
+              setRecentCourses(mapped.slice(0, 3));
+            }
+          } else {
+            setRecentCourses(mapped.filter((c) => c.title).slice(0, 3));
+          }
+        } else {
+          setRecentCourses([]);
+        }
+
+        // Now compute pending grading using assignment_id (per your submissions schema).
+        // Approach: fetch assignments for each course, then count submitted submissions per-assignment.
+        let pending = 0;
+        const courseIds = Array.isArray(courseRows) ? courseRows.map((r: any) => r.id).filter(Boolean) : [];
+
+        // collect assignment ids for instructor courses
+        const assignmentIds: string[] = [];
+        for (const cid of courseIds) {
+          try {
+            const ares: any = await supabase
+              .from('assignments')
+              .select('id')
+              .eq('course_db_id', cid);
+            if (!ares?.error && Array.isArray(ares?.data)) {
+              assignmentIds.push(...ares.data.map((a: any) => a.id).filter(Boolean));
+            } else if (ares?.error) {
+              console.warn(`assignments select for course ${cid} error`, ares.error);
+            }
+          } catch (e) {
+            console.warn(`assignments select for course ${cid} failed`, e);
+          }
+        }
+
+        // count submissions per-assignment (use head/count when supported)
+        for (const aid of assignmentIds) {
+          try {
+            const sres: any = await supabase
+              .from('submissions')
+              .select('id', { count: 'exact', head: true })
+              .eq('assignment_id', aid)
+              .eq('status', 'submitted');
+            const c = Number(sres?.count ?? (Array.isArray(sres?.data) ? sres.data.length : 0));
+            pending += Number.isFinite(c) ? c : 0;
+          } catch (e) {
+            console.warn(`counting submissions for assignment ${aid} failed`, e);
+          }
+        }
+
+        setPendingGradingCount(Number.isFinite(pending) ? pending : 0);
       } catch (err) {
-        // If anything fails, leave the counts unchanged/null but log for debugging
         console.error('compute instructor counts failed', err);
       }
     } catch (err) {
@@ -355,22 +456,26 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
     }
   };
 
-  // Fetch submissions for a given assignment (uses course submissions endpoint and filters by assignment_id)
+  // Fetch submissions for a given assignment (directly from submissions table)
   async function openSubmissionsForAssignment(a: AssignmentWithCourse) {
     setCurrentAssignment(a);
     setSubmissionsForAssignment(null);
     setSubmissionsModalOpen(true);
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const instructorId = sessionData?.session?.user?.id;
-      if (!instructorId) throw new Error('Not authenticated');
-      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
-      const res = await fetch(`${API_BASE}/users/courses/submissions/?course_db_id=${encodeURIComponent(String(a.course?.id ?? a.course?.code ?? ''))}&instructor_id=${encodeURIComponent(instructorId)}`);
-      const j = await res.json().catch(() => []);
-      const rows: any[] = Array.isArray(j) ? j : (j?.data ?? []);
-      // filter by assignment_id
-      const filtered = rows.filter((s: any) => String(s.assignment_id) === String(a.id));
-      setSubmissionsForAssignment(filtered);
+      // Query submissions table by assignment_id (your schema uses assignment_id)
+      const { data, error } = await supabase
+        .from('submissions')
+        .select('*')
+        .eq('assignment_id', String(a.id))
+        .order('submitted_at', { ascending: false });
+      if (error) {
+        console.error('supabase submissions select error', error);
+        setSubmissionsForAssignment([]);
+        return;
+      }
+      // Ensure we only expose the rows array
+      const rows: any[] = Array.isArray(data) ? data : [];
+      setSubmissionsForAssignment(rows);
     } catch (err: any) {
       console.error('openSubmissionsForAssignment failed', err);
       setSubmissionsForAssignment([]);
@@ -633,6 +738,28 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
     if (el) el.remove();
   }
 
+  // urgent assignments: due within next 48 hours and not graded (allow instructor to open & grade quickly)
+  const urgentAssignments = useMemo(() => {
+    const now = Date.now();
+    const windowMs = 48 * 60 * 60 * 1000; // 48 hours
+    return groupedAssignments
+      .flatMap((g) => g.assignments.map((a) => ({ ...a, groupDate: g.date })))
+      .filter((a) => {
+        try {
+          if (!a.due_date) return false;
+          const due = new Date(a.due_date).getTime();
+          if (!Number.isFinite(due)) return false;
+          const withinWindow = due >= now && due <= now + windowMs;
+          const needsAttention = a.status !== 'graded';
+          return withinWindow && needsAttention;
+        } catch {
+          return false;
+        }
+      })
+      .sort((x, y) => new Date(x.due_date).getTime() - new Date(y.due_date).getTime())
+      .slice(0, 4);
+  }, [groupedAssignments]);
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
@@ -706,10 +833,47 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
               {/* Main column */}
               <main className="lg:col-span-3">
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-medium text-slate-700">Upcoming due dates</h2>
-                  <div className="flex items-center gap-2 text-sm text-slate-500">
-                    <Calendar size={16} />
-                    <span>Sorted by due date</span>
+                  <div>
+                    <h2 className="text-xl font-medium text-slate-700">Upcoming due dates</h2>
+                    <div className="flex items-center gap-2 text-sm text-slate-500">
+                      <Calendar size={16} />
+                      <span>Sorted by due date</span>
+                    </div>
+                  </div>
+
+                  {/* Right-side quick area: recent course + urgent assignments */}
+                  <div className="flex items-center gap-4">
+                    {/* recently created course */}
+                    {recentCourses.length > 0 && (
+                      <div className="bg-white border rounded-md px-3 py-2 text-sm shadow-sm flex items-center gap-3">
+                        <div className="text-xs text-slate-500">New course</div>
+                        <button
+                          onClick={() => navigate(`/courses/${recentCourses[0].id}`)}
+                          className="text-sm font-semibold text-indigo-600 hover:underline"
+                        >
+                          {recentCourses[0].title ?? `Course ${recentCourses[0].id}`}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* urgent assignments near deadline */}
+                    {urgentAssignments.length > 0 && (
+                      <div className="bg-white border rounded-md px-3 py-2 text-sm shadow-sm">
+                        <div className="text-xs text-slate-500 mb-1">Near deadline</div>
+                        <div className="flex gap-2">
+                          {urgentAssignments.map((a) => (
+                            <button
+                              key={a.id}
+                              onClick={() => openSubmissionsForAssignment(a)}
+                              title={`Open submissions for ${a.title}`}
+                              className="px-2 py-1 rounded bg-yellow-50 text-yellow-800 border text-xs hover:bg-yellow-100"
+                            >
+                              {a.course?.code ?? ''} · {a.title ? (a.title.length > 18 ? a.title.slice(0, 15) + '…' : a.title) : `#${a.id}`}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
