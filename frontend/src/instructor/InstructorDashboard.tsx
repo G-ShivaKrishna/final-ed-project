@@ -222,18 +222,19 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
   // --- end new helpers ---
 
   useEffect(() => {
-    // when location.search contains ?view=..., reflect that in the UI
+    // when location changes, reflect ?view=... or default to dashboard
     const params = new URLSearchParams(location.search);
     const view = params.get('view');
     if (view === 'courses' || view === 'create' || view === 'dashboard') {
-      // set matching view (default 'dashboard' for explicit dashboard)
       setActiveView(view === 'dashboard' ? 'dashboard' : view);
+    } else {
+      // no or invalid view -> dashboard
+      setActiveView('dashboard');
     }
     fetchAssignments();
     fetchProfileSummary();
-    // Optionally, add realtime subscription logic here if needed
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [/* run on mount and when location.search changes */ location.search]);
+  }, [location.pathname, location.search]);
 
   // Avoid retrying an explicit-column query that caused a 42703 (column not found).
   // Once we detect such a schema mismatch, we switch to a safe select('*') and only log once.
@@ -973,7 +974,12 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
       <div className="max-w-7xl mx-auto">
         <header className="flex items-center justify-between mb-6">
           <div className="flex flex-col justify-center">
-            <h1 className="text-3xl font-semibold text-slate-900 dark:text-slate-100">Instructor dashboard</h1>
+            <h1
+              className="text-3xl font-semibold text-slate-900 dark:text-slate-100 cursor-pointer hover:underline"
+              onClick={() => { navigate('/instructor-dashboard?view=dashboard'); setActiveView('dashboard'); }}
+            >
+              Instructor dashboard
+            </h1>
             <p className="text-sm text-slate-500 dark:text-slate-400">Welcome back, {profileName ?? 'Instructor'}</p>
           </div>
 
@@ -1004,6 +1010,12 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
 
             {menuOpen && (
               <div ref={menuRef} className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg ring-1 ring-black ring-opacity-5 py-1 z-50">
+               <button
+                 onClick={() => { navigate('/instructor-dashboard?view=dashboard'); setActiveView('dashboard'); setMenuOpen(false); }}
+                 className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100"
+               >
+                 Dashboard
+               </button>
                 <button onClick={handleRefresh} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Refresh</button>
                 <button onClick={handleExportCSV} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Export CSV</button>
                 {/* Push a history entry so Back goes to the previous page */}

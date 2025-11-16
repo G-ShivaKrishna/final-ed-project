@@ -647,13 +647,10 @@ export default function CoursesList(): JSX.Element {
               <div className="flex items-center gap-2">
                 <button onClick={() => navigate(-1)} className="px-3 py-2 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">Back</button>
                 <button onClick={() => navigate('/instructor-dashboard?view=dashboard')} className="px-3 py-2 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">Dashboard</button>
-                <button onClick={() => { setSelectedCourse(null); setRequests(null); setStudents(null); }} className="px-3 py-2 border rounded-md">Close</button>
-                <button onClick={() => { /* optional: navigate to full course editor route later */ }} className="px-3 py-2 bg-indigo-600 text-white rounded-md">Open editor</button>
                 <button onClick={() => deleteCourse(selectedCourse)} className="px-3 py-2 bg-red-600 text-white rounded-md">Delete course</button>
                 {/* new quick-create buttons */}
                 <button onClick={() => setAddAssignOpen(true)} className="px-3 py-2 bg-green-600 text-white rounded-md">Add assignment</button>
                 <button onClick={() => { setResForm({ type: 'syllabus', title: '', content: '', video_url: '' }); setAddResOpen(true); }} className="px-3 py-2 bg-orange-600 text-white rounded-md">Add syllabus</button>
-                {/* 'Add resource' removed to avoid duplication with syllabus/video flow */}
               </div>
             </div>
 
@@ -785,14 +782,6 @@ export default function CoursesList(): JSX.Element {
                     ))}
                   </ul>
                 )}
-
-                <div className="mt-6">
-                  <h5 className="text-sm font-medium mb-2">Quick actions</h5>
-                  <div className="flex flex-col gap-2">
-                    <button className="px-3 py-2 bg-indigo-600 text-white rounded-md">Download roster</button>
-                    <button className="px-3 py-2 border rounded-md" onClick={() => { /* placeholder for settings */ }}>Course settings</button>
-                  </div>
-                </div>
               </aside>
             </div>
           </div>
