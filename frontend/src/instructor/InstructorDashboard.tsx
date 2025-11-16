@@ -992,35 +992,41 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
   // Navigate to a course and record it in "recently opened"
   function goToCourse(course?: { id?: string | number; name?: string; title?: string; course_id?: string; code?: string }) {
     if (!course?.id) return;
+    const normalized = {
+      id: course.id,
+      title: course.name ?? course.title ?? '',
+      code: course.course_id ?? course.code ?? '',
+    };
     try { recordOpenedCourse(course); } catch {}
-    // Instructor management page path (adjust if your router uses a different one)
-    // Preferred pattern: /instructor/courses/manage/:id
-    const managePathPrimary = `/instructor/courses/manage/${course.id}`;
-    // Fallback pattern if primary route not defined: /instructor/courses/${course.id}
-    const fallbackPath = `/instructor/courses/${course.id}`;
-    // Try primary; if navigation fails you can change to fallback.
-    navigate(managePathPrimary);
+
+    // Navigate to the dashboard's courses view and include the course_db_id so CoursesList can auto-open it
+    // This avoids relying on /instructor/courses/manage/:id routes that may not exist.
+    const target = `/instructor-dashboard?view=courses&course_db_id=${encodeURIComponent(String(normalized.id))}`;
+    // ensure the dashboard switches to the courses view
+    setActiveView('courses');
+    navigate(target, { state: { open_course_id: normalized.id } });
   }
 
   // Navigate directly to an instructor submissions grading page for an assignment
   function navigateToSubmissions(a: AssignmentWithCourse) {
     if (!a) return;
+    // Record the opened course for recent list
     recordOpenedCourse(a.course);
-    const before = location.pathname;
-    const primary = `/instructor/assignments/${a.id}/submissions`;
-    const altCourse = a.course?.id ? `/instructor/courses/manage/${a.course.id}` : null;
-    const fallbackStudent = a.course?.id ? `/courses/${a.course.id}` : null;
-    navigate(primary);
-    // After a short delay, if path unchanged, fall back progressively
-    setTimeout(() => {
-      if (location.pathname === before) {
-        if (altCourse) {
-          navigate(altCourse);
-        } else if (fallbackStudent) {
-          navigate(fallbackStudent);
-        }
-      }
-    }, 50);
+
+    // Navigate to the dashboard's courses view and include the course_db_id so CoursesList can auto-open it.
+    // Also include the assignment id in navigation state as `focus_assignment_id` so the course view
+    // can optionally highlight or focus that assignment after opening.
+    const courseId = a.course?.id;
+    if (!courseId) {
+      // fallback to existing assignment-level route if course id missing
+      const primary = `/instructor/assignments/${a.id}/submissions`;
+      navigate(primary);
+      return;
+    }
+
+    const target = `/instructor-dashboard?view=courses&course_db_id=${encodeURIComponent(String(courseId))}`;
+    setActiveView('courses');
+    navigate(target, { state: { open_course_id: courseId, focus_assignment_id: a.id } });
   }
 
   return (

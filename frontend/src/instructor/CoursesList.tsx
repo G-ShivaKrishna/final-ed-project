@@ -537,28 +537,33 @@ export default function CoursesList(): JSX.Element {
   }
 
   useEffect(() => {
-    // If dashboard requested a modal via query params, open it and then clean the URL.
-    try {
-      const params = new URLSearchParams(location.search);
-      const open = params.get('open'); // e.g. addAssignment | addResource
-      const typ = params.get('type'); // optional e.g. syllabus
-      // Only act if we're on the courses view (active view logic handled in parent) — still safe to check
-      if (open === 'addAssignment') {
-        setAddAssignOpen(true);
-        // remove open param
-        params.delete('open'); params.delete('type');
-        urlNavigate(`${location.pathname}?${params.toString()}`, { replace: true });
-      } else if (open === 'addResource') {
-        // if type=syllabus set resource form type
-        if (typ === 'syllabus') setResForm((s) => ({ ...s, type: 'syllabus' }));
-        else setResForm((s) => ({ ...s, type: 'video' }));
-        setAddResOpen(true);
-        params.delete('open'); params.delete('type');
-        urlNavigate(`${location.pathname}?${params.toString()}`, { replace: true });
+    // If the URL (or navigation state) requests opening a specific course, auto-open it.
+    // Allows InstructorDashboard to navigate to ?view=courses&course_db_id=... and have the course modal open.
+    async function maybeOpenCourseFromUrl() {
+      try {
+        const params = new URLSearchParams(location.search);
+        const courseIdFromQuery = params.get('course_db_id');
+        const courseIdFromState = (location.state as any)?.open_course_id ?? (location.state as any)?.course?.id;
+        const courseId = courseIdFromQuery ?? (courseIdFromState ? String(courseIdFromState) : null);
+        if (!courseId) return;
+        // wait until courses are loaded (fetchCourses runs on mount) — if courses not loaded yet, keep waiting until they are
+        if (courses === null) return;
+        // find a matching course if present
+        const found = (courses || []).find((c) => String(c.id) === String(courseId));
+        if (found) {
+          // open using the real course object
+          await openCourseModal(found);
+        } else {
+          // construct a minimal course object (openCourseModal only needs id and will fetch details)
+          await openCourseModal({ id: courseId, name: `Course ${courseId}`, course_id: undefined } as Course);
+        }
+      } catch (e) {
+        // ignore errors — auto-open should be best-effort
       }
-    } catch (_e) { /* ignore URL parsing errors */ }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.search]);
+    }
+    maybeOpenCourseFromUrl();
+    // run when the location or courses list changes
+  }, [location.search, location.state, courses, /* openCourseModal defined inline so no eslint deps */]);
 
   if (loading) return <div className="bg-white rounded-xl p-6 shadow-sm text-center">Loading courses...</div>;
   if (error) return <div className="bg-red-50 rounded-xl p-4 text-red-700">{error}</div>;
