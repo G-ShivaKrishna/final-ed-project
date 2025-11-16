@@ -93,7 +93,7 @@ export default function CoursesList(): JSX.Element {
       const publicUrl = (pubRes as any)?.data?.publicUrl || (pubRes as any)?.publicURL || (pubRes as any)?.public_url || '';
       if (publicUrl) return publicUrl;
       const { data: signedData, error: signedErr } = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60);
-      if (!signedErr && signedData?.signedURL) return signedData.signedURL;
+      if (!signedErr && signedData?.signedUrl) return signedData.signedUrl;
     } catch (e) {
       console.warn('getPublicUrlOrSigned failed', e);
     }
@@ -105,7 +105,7 @@ export default function CoursesList(): JSX.Element {
     if (!file) return '';
     try {
       const path = `${courseId}/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
-      const { data, error } = await supabase.storage.from('assignments').upload(path, file, { upsert: true });
+      const { error } = await supabase.storage.from('assignments').upload(path, file, { upsert: true });
       if (error) throw error;
       const publicUrl = await getPublicUrlOrSigned('assignments', path);
       return publicUrl;
@@ -266,7 +266,8 @@ export default function CoursesList(): JSX.Element {
           subs.forEach((s: any) => {
             const aid = String(s.assignment_id);
             if (!map.has(aid)) map.set(aid, []);
-            map.get(aid).push(s);
+            const arr = map.get(aid)!; // asserted non-null because we just ensured it exists
+            arr.push(s);
           });
           // read current assignments from state (fallback to []) then attach submissions
           setAssignments((prev) => {
@@ -421,7 +422,7 @@ export default function CoursesList(): JSX.Element {
           if (!res.ok) throw new Error(body?.error || `Delete failed: ${res.status}`);
 
           // refresh assignments list
-          await openCourseModal(selectedCourse);
+          if (selectedCourse) await openCourseModal(selectedCourse);
         } catch (err: any) {
           setError(err?.message || String(err));
         }
@@ -686,11 +687,11 @@ export default function CoursesList(): JSX.Element {
                 <div className="text-xs text-slate-500 mt-1">Instructor: {instructorEmail ?? '—'}</div>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => navigate('/instructor-dashboard?view=dashboard')} className="px-3 py-2 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">Dashboard</button>
-                <button onClick={() => deleteCourse(selectedCourse)} className="px-3 py-2 bg-red-600 text-white rounded-md">Delete course</button>
-                {/* new quick-create buttons */}
-                <button onClick={() => setAddAssignOpen(true)} className="px-3 py-2 bg-green-600 text-white rounded-md">Add assignment</button>
-                <button onClick={() => { setResForm({ type: 'syllabus', title: '', content: '', video_url: '' }); setAddResOpen(true); }} className="px-3 py-2 bg-orange-600 text-white rounded-md">Add syllabus</button>
+                <button onClick={() => navigate('/instructor-dashboard?view=dashboard')} className="px-3 py-2 bg-indigo-600 text-white rounded-md">Dashboard</button>
+                <button onClick={() => deleteCourse(selectedCourse)} className="px-3 py-2 bg-indigo-600 text-white rounded-md">Delete course</button>
+                {/* new quick-create buttons (uniform color) */}
+                <button onClick={() => setAddAssignOpen(true)} className="px-3 py-2 bg-indigo-600 text-white rounded-md">Add assignment</button>
+                <button onClick={() => { setResForm({ type: 'syllabus', title: '', content: '', video_url: '' }); setAddResOpen(true); }} className="px-3 py-2 bg-indigo-600 text-white rounded-md">Add syllabus</button>
               </div>
             </div>
 

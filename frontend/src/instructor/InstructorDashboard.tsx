@@ -16,6 +16,11 @@ type AssignmentWithCourse = {
     id: string | number;
     code?: string;
     color?: string;
+    // allow alternate shapes coming from various backends
+    course_id?: string;
+    courseId?: string;
+    name?: string;
+    title?: string;
   };
   submitted_file?: string;
 };
@@ -120,7 +125,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
       const safe = file.name.replace(/\s+/g, '_');
       const assignmentId = editingAssignment?.id ?? 'unassigned';
       const path = `assignments/${assignmentId}/${userId}_${Date.now()}_${safe}`;
-      const { data, error } = await supabase.storage.from('assignments').upload(path, file, { upsert: true });
+      const { error } = await supabase.storage.from('assignments').upload(path, file, { upsert: true });
       if (error) throw error;
       const pub = await supabase.storage.from('assignments').getPublicUrl(path);
       const publicUrl = (pub as any)?.data?.publicUrl || '';
@@ -263,7 +268,6 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
       try {
         // fetch courses (try rich select once, then fall back — existing logic using preferSafeCourseSelectRef)
         let courseRows: any[] = [];
-        let hasMeta = false;
         try {
           if (!preferSafeCourseSelectRef.current) {
             // use schema that matches your DB: name and course_id (no `color` column)
@@ -273,7 +277,6 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
               .eq('instructor_id', userId);
             if (!rich?.error && Array.isArray(rich?.data) && rich.data.length > 0) {
               courseRows = rich.data;
-              hasMeta = true;
             } else if (rich?.error) {
               // If the error indicates a missing column (42703), switch to safe select(*) for subsequent calls
               if (rich.error?.code === '42703') {
@@ -297,7 +300,6 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                 .eq('instructor_id', userId);
               if (!safe?.error && Array.isArray(safe?.data) && safe.data.length > 0) {
                 courseRows = safe.data;
-                hasMeta = courseRows.some((r: any) => r.name || r.course_id || r.created_at);
               } else if (safe?.error) {
                 if (!loggedCourseSelectErrorRef.current) {
                   console.warn('safe select(*) for courses returned error', safe.error);
@@ -309,21 +311,6 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                 console.warn('safe select(*) for courses failed', e);
                 loggedCourseSelectErrorRef.current = true;
               }
-            }
-          }
-
-          if ((!Array.isArray(courseRows) || courseRows.length === 0)) {
-            try {
-              const minimal: any = await supabase
-                .from('courses')
-                .select('id')
-                .eq('instructor_id', userId);
-              if (!minimal?.error && Array.isArray(minimal?.data)) {
-                courseRows = minimal.data;
-              }
-            } catch (e) {
-              console.warn('minimal courses select failed', e);
-              courseRows = [];
             }
           }
         } catch (e) {
@@ -350,6 +337,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                 const tb = new Date(b.created_at || 0).getTime();
                 return tb - ta;
               });
+              // keep a small recentCourses list for the right column
               setRecentCourses(sorted.slice(0, 3));
             } catch {
               setRecentCourses(mapped.slice(0, 3));
@@ -675,18 +663,881 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
   }
   // --- end new helpers ---
 
-  const statusColor = (status: string) => {
-    switch (status) {
-      case 'graded':
-        return 'bg-green-50 text-green-700 border-green-200';
-      case 'submitted':
-        return 'bg-blue-50 text-blue-700 border-blue-200';
-      case 'missing':
-        return 'bg-red-50 text-red-700 border-red-200';
-      default:
-        return 'bg-gray-50 text-gray-700 border-gray-200';
+  useEffect(() => {
+    // when location changes, reflect ?view=... or default to dashboard
+    const params = new URLSearchParams(location.search);
+    const view = params.get('view');
+    if (view === 'courses' || view === 'create' || view === 'dashboard') {
+      setActiveView(view === 'dashboard' ? 'dashboard' : view);
+    } else {
+      // no or invalid view -> dashboard
+      setActiveView('dashboard');
+    }
+    fetchAssignments();
+    fetchProfileSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, location.search]);
+
+  // Avoid retrying an explicit-column query that caused a 42703 (column not found).
+  // Once we detect such a schema mismatch, we switch to a safe select('*') and only log once.
+  const preferSafeCourseSelectRef = useRef<boolean>(false);
+  const loggedCourseSelectErrorRef = useRef<boolean>(false);
+
+  const fetchProfileSummary = async () => {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id;
+      if (!userId) return;
+
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+
+      const profileRes = await fetch(`${API_BASE}/users/user-profile/?user_id=${encodeURIComponent(userId)}`);
+      if (profileRes.ok) {
+        const json = await profileRes.json();
+        const data = json.data || json;
+        if (data) {
+          setProfileName(data.username || data.full_name || null);
+          setProfileEmail(data.email || null);
+        }
+      }
+
+      // Ensure pending submissions refreshed when refreshing profile summary
+      // Compute instructor-specific counts robustly using the submissions table schema you provided:
+      try {
+        // fetch courses (try rich select once, then fall back — existing logic using preferSafeCourseSelectRef)
+        let courseRows: any[] = [];
+        try {
+          if (!preferSafeCourseSelectRef.current) {
+            // use schema that matches your DB: name and course_id (no `color` column)
+            const rich: any = await supabase
+              .from('courses')
+              .select('id, name, created_at, course_id')
+              .eq('instructor_id', userId);
+            if (!rich?.error && Array.isArray(rich?.data) && rich.data.length > 0) {
+              courseRows = rich.data;
+            } else if (rich?.error) {
+              // If the error indicates a missing column (42703), switch to safe select(*) for subsequent calls
+              if (rich.error?.code === '42703') {
+                preferSafeCourseSelectRef.current = true;
+                if (!loggedCourseSelectErrorRef.current) {
+                  // log once to help debugging, but avoid flooding the console
+                  console.warn('explicit courses select failed (missing column); switching to select(*). Error:', rich.error);
+                  loggedCourseSelectErrorRef.current = true;
+                }
+              } else {
+                console.warn('supabase rich courses query error', rich.error);
+              }
+            }
+          }
+
+          if ((!Array.isArray(courseRows) || courseRows.length === 0) && preferSafeCourseSelectRef.current) {
+            try {
+              const safe: any = await supabase
+                .from('courses')
+                .select('*')
+                .eq('instructor_id', userId);
+              if (!safe?.error && Array.isArray(safe?.data) && safe.data.length > 0) {
+                courseRows = safe.data;
+              } else if (safe?.error) {
+                if (!loggedCourseSelectErrorRef.current) {
+                  console.warn('safe select(*) for courses returned error', safe.error);
+                  loggedCourseSelectErrorRef.current = true;
+                }
+              }
+            } catch (e) {
+              if (!loggedCourseSelectErrorRef.current) {
+                console.warn('safe select(*) for courses failed', e);
+                loggedCourseSelectErrorRef.current = true;
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('unexpected error while fetching courses', e);
+          courseRows = [];
+        }
+
+        setCoursesCount(Array.isArray(courseRows) ? courseRows.length : 0);
+
+        // map DB fields into UI shape (title/code)
+        if (Array.isArray(courseRows) && courseRows.length > 0) {
+          const hasCreatedAt = courseRows.some((r: any) => Boolean(r.created_at));
+          const mapped = [...courseRows].map((r: any) => ({
+            id: r.id,
+            title: r.name ?? r.title ?? undefined,
+            created_at: r.created_at,
+            code: r.course_id ?? r.code ?? undefined,
+            color: r.color,
+          }));
+          if (hasCreatedAt) {
+            try {
+              const sorted = mapped.sort((a: any, b: any) => {
+                const ta = new Date(a.created_at || 0).getTime();
+                const tb = new Date(b.created_at || 0).getTime();
+                return tb - ta;
+              });
+              // keep a small recentCourses list for the right column
+              setRecentCourses(sorted.slice(0, 3));
+            } catch {
+              setRecentCourses(mapped.slice(0, 3));
+            }
+          } else {
+            setRecentCourses(mapped.filter((c) => c.title).slice(0, 3));
+          }
+        } else {
+          setRecentCourses([]);
+        }
+
+        // Now compute pending grading using assignment_id (per your submissions schema).
+        // Approach: fetch assignments for each course, then count submitted submissions per-assignment.
+        let pending = 0;
+        const courseIds = Array.isArray(courseRows) ? courseRows.map((r: any) => r.id).filter(Boolean) : [];
+
+        // collect assignment ids for instructor courses
+        const assignmentIds: string[] = [];
+        for (const cid of courseIds) {
+          try {
+            const ares: any = await supabase
+              .from('assignments')
+              .select('id')
+              .eq('course_db_id', cid);
+            if (!ares?.error && Array.isArray(ares?.data)) {
+              assignmentIds.push(...ares.data.map((a: any) => a.id).filter(Boolean));
+            } else if (ares?.error) {
+              console.warn(`assignments select for course ${cid} error`, ares.error);
+            }
+          } catch (e) {
+            console.warn(`assignments select for course ${cid} failed`, e);
+          }
+        }
+
+        // count submissions per-assignment (use head/count when supported)
+        for (const aid of assignmentIds) {
+          try {
+            const sres: any = await supabase
+              .from('submissions')
+              .select('id', { count: 'exact', head: true })
+              .eq('assignment_id', aid)
+              .eq('status', 'submitted');
+            const c = Number(sres?.count ?? (Array.isArray(sres?.data) ? sres.data.length : 0));
+            pending += Number.isFinite(c) ? c : 0;
+          } catch (e) {
+            console.warn(`counting submissions for assignment ${aid} failed`, e);
+          }
+        }
+
+        setPendingGradingCount(Number.isFinite(pending) ? pending : 0);
+      } catch (err) {
+        console.error('compute instructor counts failed', err);
+      }
+    } catch (err) {
+      console.error('fetchProfileSummary error', err);
     }
   };
+
+  // Build grouped assignments from instructor's courses if API returns none
+  async function fetchAssignmentsFallbackFromSupabase() {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id;
+      if (!userId) return;
+
+      // 1) Instructor courses (map: id -> course_id for UI code)
+      const cr = await supabase
+        .from('courses')
+        .select('id, course_id, name')
+        .eq('instructor_id', userId);
+      const courses = Array.isArray(cr.data) ? cr.data : [];
+      const courseIds = courses.map((c: any) => c.id).filter(Boolean);
+      if (courseIds.length === 0) { setGroupedAssignments([]); return; }
+
+      const courseMap: Record<string, { id: string; code?: string; title?: string }> = {};
+      for (const c of courses) {
+        courseMap[String(c.id)] = { id: String(c.id), code: c.course_id, title: c.name };
+      }
+
+      // 2) Assignments under those courses
+      const ar = await supabase
+        .from('assignments')
+        .select('id, title, due_date, points, course_db_id')
+        .in('course_db_id', courseIds);
+      const assigns = Array.isArray(ar.data) ? ar.data : [];
+
+      // 3) Optional: detect pending submissions per assignment to set a useful status
+      //    We'll mark as "submitted" if there are any submissions with status=submitted.
+      const statusByAssignment: Record<string, string> = {};
+      for (const a of assigns) {
+        try {
+          const c = await supabase
+            .from('submissions')
+            .select('id', { count: 'exact', head: true })
+            .eq('assignment_id', a.id)
+            .eq('status', 'submitted');
+          const count = Number(c?.count ?? 0);
+          if (count > 0) statusByAssignment[String(a.id)] = 'submitted';
+        } catch {
+          // ignore per-assignment errors
+        }
+      }
+
+      // 4) Normalize and group like fetchAssignments does
+      const normalized = assigns.map((a: any) => {
+        let iso = '';
+        try { if (a.due_date) iso = new Date(a.due_date).toISOString(); } catch {}
+        const course = courseMap[String(a.course_db_id)] || undefined;
+        const status = statusByAssignment[String(a.id)] || 'open';
+        return {
+          id: a.id,
+          title: a.title,
+          due_date: iso,
+          status,
+          points: a.points ?? undefined,
+          course: course ? { id: course.id, code: course.code } : undefined,
+        } as AssignmentWithCourse;
+      });
+
+      const grouped = normalized.reduce((acc: Record<string, AssignmentWithCourse[]>, a) => {
+        const d = a.due_date ? new Date(a.due_date) : new Date();
+        const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+        (acc[dateStr] ||= []).push(a);
+        return acc;
+      }, {});
+      const groupedArr = Object.entries(grouped).map(([date, assignments]) => ({ date, assignments })) as GroupedAssignment[];
+      setGroupedAssignments(groupedArr);
+    } catch (e) {
+      console.warn('fallback assignments load failed', e);
+    }
+  }
+
+  const fetchAssignments = async () => {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id;
+      if (!userId) return;
+
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+      const res = await fetch(`${API_BASE}/users/dashboard/?user_id=${encodeURIComponent(userId)}`);
+      if (!res.ok) {
+        console.error('dashboard API error', res.status);
+        // Try Supabase fallback if API fails
+        await fetchAssignmentsFallbackFromSupabase();
+        return;
+      }
+
+      const json = await res.json();
+      const rawAssignments: AssignmentWithCourse[] = json.assignments || [];
+      if (rawAssignments && rawAssignments.length > 0) {
+        // normalize due_date -> ISO and ensure course.code exists
+        const assignments = rawAssignments.map((a) => {
+          try {
+            if (a.due_date) a.due_date = new Date(a.due_date).toISOString();
+          } catch (_) { /* leave as-is */ }
+          if (a.course && !a.course.code) a.course.code = a.course.course_id || a.course.courseId || a.course.code;
+          // attach local YYYY-MM-DD key to avoid timezone issues when grouping
+          try {
+            const d = a.due_date ? new Date(a.due_date) : new Date();
+            const yy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            (a as any).local_date = `${yy}-${mm}-${dd}`;
+          } catch (_) { (a as any).local_date = null; }
+          return a;
+        });
+
+        // debug: log incoming and normalized assignments to help trace missing items
+        console.debug('dashboard: raw assignments payload', rawAssignments);
+        console.debug('dashboard: normalized assignments', assignments.map((x) => ({ id: x.id, due_date: x.due_date, local_date: (x as any).local_date })));
+
+        const grouped = assignments.reduce((acc: Record<string, AssignmentWithCourse[]>, a: AssignmentWithCourse) => {
+          // group by a human-friendly local date string for display
+          const date = a.due_date ? new Date(a.due_date) : new Date();
+          const dateStr = date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+          acc[dateStr] = acc[dateStr] || [];
+          acc[dateStr].push(a);
+          return acc;
+        }, {} as Record<string, AssignmentWithCourse[]>);
+        const groupedArr = Object.entries(grouped).map(([date, assignments]) => ({ date, assignments })) as GroupedAssignment[];
+        setGroupedAssignments(groupedArr);
+      } else {
+        // API returned empty, try to populate from Supabase so dashboard has content
+        await fetchAssignmentsFallbackFromSupabase();
+      }
+    } catch (err) {
+      console.error('fetchAssignments error', err);
+      // Network/parse error — still try fallback once
+      await fetchAssignmentsFallbackFromSupabase();
+    }
+  };
+
+  // Refresh per-assignment submitted counts for assignments due within the last 7 days
+  useEffect(() => {
+    const now = Date.now();
+    const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+    // collect candidate assignment IDs
+    const candidates = Array.from(
+      new Set(
+        groupedAssignments
+          .flatMap((g) => g.assignments)
+          .filter((a) => {
+            if (!a?.due_date) return false;
+            const due = new Date(a.due_date).getTime();
+            return Number.isFinite(due) && due <= now && due >= weekAgo;
+          })
+          .map((a) => String(a.id))
+      )
+    );
+    if (candidates.length === 0) {
+      setHasSubmissions({});
+      return;
+    }
+    // limit to a reasonable batch (avoid too many network calls)
+    const limited = candidates.slice(0, 50);
+    (async () => {
+      try {
+        const entries = await Promise.all(
+          limited.map(async (aid) => {
+            try {
+              const resp: any = await supabase
+                .from('submissions')
+                .select('id', { count: 'exact', head: true })
+                .eq('assignment_id', aid)
+                .eq('status', 'submitted');
+              const count = Number(resp?.count ?? 0);
+              return [aid, count] as const;
+            } catch {
+              return [aid, 0] as const;
+            }
+          })
+        );
+        const map: Record<string, number> = {};
+        for (const [aid, count] of entries) map[aid] = count;
+        setHasSubmissions(map);
+      } catch {
+        setHasSubmissions({});
+      }
+    })();
+  }, [groupedAssignments]);
+
+  // Fetch submissions for a given assignment (directly from submissions table)
+  async function openSubmissionsForAssignment(a: AssignmentWithCourse) {
+    setCurrentAssignment(a);
+    setSubmissionsForAssignment(null);
+    setSubmissionsModalOpen(true);
+    try {
+      // Query submissions table by assignment_id (your schema uses assignment_id)
+      const { data, error } = await supabase
+        .from('submissions')
+        .select('*')
+        .eq('assignment_id', String(a.id))
+        .order('submitted_at', { ascending: false });
+      if (error) {
+        console.error('supabase submissions select error', error);
+        setSubmissionsForAssignment([]);
+        return;
+      }
+      const rows: any[] = Array.isArray(data) ? data : [];
+      setSubmissionsForAssignment(rows);
+      // count as opened for its course
+      recordOpenedCourse(a.course);
+    } catch (err: any) {
+      console.error('openSubmissionsForAssignment failed', err);
+      setSubmissionsForAssignment([]);
+    }
+  }
+
+  function closeSubmissionsModal() {
+    setSubmissionsModalOpen(false);
+    setSubmissionsForAssignment(null);
+    setCurrentAssignment(null);
+  }
+
+  // Grade a specific submission (open modal)
+  function openGradeForSubmission(sub: any) {
+    setGradingSubmission(sub);
+    setGradeValue(sub.grade ?? '');
+    setGradeFeedback(sub.feedback ?? '');
+    setGradingError(null);
+    setGradeModalOpen(true);
+  }
+  function closeGradeModal() {
+    setGradeModalOpen(false);
+    setGradingSubmission(null);
+    setGradeValue('');
+    setGradeFeedback('');
+    setGradingError(null);
+  }
+  async function submitGradeForSubmission() {
+    if (!gradingSubmission || (!Number.isFinite(Number(gradeValue)) && gradeValue !== '')) {
+      setGradingError('Enter a numeric grade');
+      return;
+    }
+    setGradingLoading(true);
+    setGradingError(null);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const graderId = sessionData?.session?.user?.id;
+      if (!graderId) throw new Error('Not authenticated');
+      const payload = {
+        grader_id: graderId,
+        submission_id: gradingSubmission.id,
+        grade: Number(gradeValue),
+        feedback: gradeFeedback || null,
+      };
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+      const res = await fetch(`${API_BASE}/users/courses/submissions/grade/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || `Failed: ${res.status}`);
+      // refresh submissions list for current assignment
+      if (currentAssignment) await openSubmissionsForAssignment(currentAssignment);
+      closeGradeModal();
+    } catch (err: any) {
+      setGradingError(err?.message || String(err));
+    } finally {
+      setGradingLoading(false);
+    }
+  }
+  // --- end new helpers ---
+
+  useEffect(() => {
+    // when location changes, reflect ?view=... or default to dashboard
+    const params = new URLSearchParams(location.search);
+    const view = params.get('view');
+    if (view === 'courses' || view === 'create' || view === 'dashboard') {
+      setActiveView(view === 'dashboard' ? 'dashboard' : view);
+    } else {
+      // no or invalid view -> dashboard
+      setActiveView('dashboard');
+    }
+    fetchAssignments();
+    fetchProfileSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, location.search]);
+
+  // Avoid retrying an explicit-column query that caused a 42703 (column not found).
+  // Once we detect such a schema mismatch, we switch to a safe select('*') and only log once.
+  const preferSafeCourseSelectRef = useRef<boolean>(false);
+  const loggedCourseSelectErrorRef = useRef<boolean>(false);
+
+  const fetchProfileSummary = async () => {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id;
+      if (!userId) return;
+
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+
+      const profileRes = await fetch(`${API_BASE}/users/user-profile/?user_id=${encodeURIComponent(userId)}`);
+      if (profileRes.ok) {
+        const json = await profileRes.json();
+        const data = json.data || json;
+        if (data) {
+          setProfileName(data.username || data.full_name || null);
+          setProfileEmail(data.email || null);
+        }
+      }
+
+      // Ensure pending submissions refreshed when refreshing profile summary
+      // Compute instructor-specific counts robustly using the submissions table schema you provided:
+      try {
+        // fetch courses (try rich select once, then fall back — existing logic using preferSafeCourseSelectRef)
+        let courseRows: any[] = [];
+        try {
+          if (!preferSafeCourseSelectRef.current) {
+            // use schema that matches your DB: name and course_id (no `color` column)
+            const rich: any = await supabase
+              .from('courses')
+              .select('id, name, created_at, course_id')
+              .eq('instructor_id', userId);
+            if (!rich?.error && Array.isArray(rich?.data) && rich.data.length > 0) {
+              courseRows = rich.data;
+            } else if (rich?.error) {
+              // If the error indicates a missing column (42703), switch to safe select(*) for subsequent calls
+              if (rich.error?.code === '42703') {
+                preferSafeCourseSelectRef.current = true;
+                if (!loggedCourseSelectErrorRef.current) {
+                  // log once to help debugging, but avoid flooding the console
+                  console.warn('explicit courses select failed (missing column); switching to select(*). Error:', rich.error);
+                  loggedCourseSelectErrorRef.current = true;
+                }
+              } else {
+                console.warn('supabase rich courses query error', rich.error);
+              }
+            }
+          }
+
+          if ((!Array.isArray(courseRows) || courseRows.length === 0) && preferSafeCourseSelectRef.current) {
+            try {
+              const safe: any = await supabase
+                .from('courses')
+                .select('*')
+                .eq('instructor_id', userId);
+              if (!safe?.error && Array.isArray(safe?.data) && safe.data.length > 0) {
+                courseRows = safe.data;
+              } else if (safe?.error) {
+                if (!loggedCourseSelectErrorRef.current) {
+                  console.warn('safe select(*) for courses returned error', safe.error);
+                  loggedCourseSelectErrorRef.current = true;
+                }
+              }
+            } catch (e) {
+              if (!loggedCourseSelectErrorRef.current) {
+                console.warn('safe select(*) for courses failed', e);
+                loggedCourseSelectErrorRef.current = true;
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('unexpected error while fetching courses', e);
+          courseRows = [];
+        }
+
+        setCoursesCount(Array.isArray(courseRows) ? courseRows.length : 0);
+
+        // map DB fields into UI shape (title/code)
+        if (Array.isArray(courseRows) && courseRows.length > 0) {
+          const hasCreatedAt = courseRows.some((r: any) => Boolean(r.created_at));
+          const mapped = [...courseRows].map((r: any) => ({
+            id: r.id,
+            title: r.name ?? r.title ?? undefined,
+            created_at: r.created_at,
+            code: r.course_id ?? r.code ?? undefined,
+            color: r.color,
+          }));
+          if (hasCreatedAt) {
+            try {
+              const sorted = mapped.sort((a: any, b: any) => {
+                const ta = new Date(a.created_at || 0).getTime();
+                const tb = new Date(b.created_at || 0).getTime();
+                return tb - ta;
+              });
+              // keep a small recentCourses list for the right column
+              setRecentCourses(sorted.slice(0, 3));
+            } catch {
+              setRecentCourses(mapped.slice(0, 3));
+            }
+          } else {
+            setRecentCourses(mapped.filter((c) => c.title).slice(0, 3));
+          }
+        } else {
+          setRecentCourses([]);
+        }
+
+        // Now compute pending grading using assignment_id (per your submissions schema).
+        // Approach: fetch assignments for each course, then count submitted submissions per-assignment.
+        let pending = 0;
+        const courseIds = Array.isArray(courseRows) ? courseRows.map((r: any) => r.id).filter(Boolean) : [];
+
+        // collect assignment ids for instructor courses
+        const assignmentIds: string[] = [];
+        for (const cid of courseIds) {
+          try {
+            const ares: any = await supabase
+              .from('assignments')
+              .select('id')
+              .eq('course_db_id', cid);
+            if (!ares?.error && Array.isArray(ares?.data)) {
+              assignmentIds.push(...ares.data.map((a: any) => a.id).filter(Boolean));
+            } else if (ares?.error) {
+              console.warn(`assignments select for course ${cid} error`, ares.error);
+            }
+          } catch (e) {
+            console.warn(`assignments select for course ${cid} failed`, e);
+          }
+        }
+
+        // count submissions per-assignment (use head/count when supported)
+        for (const aid of assignmentIds) {
+          try {
+            const sres: any = await supabase
+              .from('submissions')
+              .select('id', { count: 'exact', head: true })
+              .eq('assignment_id', aid)
+              .eq('status', 'submitted');
+            const c = Number(sres?.count ?? (Array.isArray(sres?.data) ? sres.data.length : 0));
+            pending += Number.isFinite(c) ? c : 0;
+          } catch (e) {
+            console.warn(`counting submissions for assignment ${aid} failed`, e);
+          }
+        }
+
+        setPendingGradingCount(Number.isFinite(pending) ? pending : 0);
+      } catch (err) {
+        console.error('compute instructor counts failed', err);
+      }
+    } catch (err) {
+      console.error('fetchProfileSummary error', err);
+    }
+  };
+
+  // Build grouped assignments from instructor's courses if API returns none
+  async function fetchAssignmentsFallbackFromSupabase() {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id;
+      if (!userId) return;
+
+      // 1) Instructor courses (map: id -> course_id for UI code)
+      const cr = await supabase
+        .from('courses')
+        .select('id, course_id, name')
+        .eq('instructor_id', userId);
+      const courses = Array.isArray(cr.data) ? cr.data : [];
+      const courseIds = courses.map((c: any) => c.id).filter(Boolean);
+      if (courseIds.length === 0) { setGroupedAssignments([]); return; }
+
+      const courseMap: Record<string, { id: string; code?: string; title?: string }> = {};
+      for (const c of courses) {
+        courseMap[String(c.id)] = { id: String(c.id), code: c.course_id, title: c.name };
+      }
+
+      // 2) Assignments under those courses
+      const ar = await supabase
+        .from('assignments')
+        .select('id, title, due_date, points, course_db_id')
+        .in('course_db_id', courseIds);
+      const assigns = Array.isArray(ar.data) ? ar.data : [];
+
+      // 3) Optional: detect pending submissions per assignment to set a useful status
+      //    We'll mark as "submitted" if there are any submissions with status=submitted.
+      const statusByAssignment: Record<string, string> = {};
+      for (const a of assigns) {
+        try {
+          const c = await supabase
+            .from('submissions')
+            .select('id', { count: 'exact', head: true })
+            .eq('assignment_id', a.id)
+            .eq('status', 'submitted');
+          const count = Number(c?.count ?? 0);
+          if (count > 0) statusByAssignment[String(a.id)] = 'submitted';
+        } catch {
+          // ignore per-assignment errors
+        }
+      }
+
+      // 4) Normalize and group like fetchAssignments does
+      const normalized = assigns.map((a: any) => {
+        let iso = '';
+        try { if (a.due_date) iso = new Date(a.due_date).toISOString(); } catch {}
+        const course = courseMap[String(a.course_db_id)] || undefined;
+        const status = statusByAssignment[String(a.id)] || 'open';
+        return {
+          id: a.id,
+          title: a.title,
+          due_date: iso,
+          status,
+          points: a.points ?? undefined,
+          course: course ? { id: course.id, code: course.code } : undefined,
+        } as AssignmentWithCourse;
+      });
+
+      const grouped = normalized.reduce((acc: Record<string, AssignmentWithCourse[]>, a) => {
+        const d = a.due_date ? new Date(a.due_date) : new Date();
+        const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+        (acc[dateStr] ||= []).push(a);
+        return acc;
+      }, {});
+      const groupedArr = Object.entries(grouped).map(([date, assignments]) => ({ date, assignments })) as GroupedAssignment[];
+      setGroupedAssignments(groupedArr);
+    } catch (e) {
+      console.warn('fallback assignments load failed', e);
+    }
+  }
+
+  const fetchAssignments = async () => {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id;
+      if (!userId) return;
+
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+      const res = await fetch(`${API_BASE}/users/dashboard/?user_id=${encodeURIComponent(userId)}`);
+      if (!res.ok) {
+        console.error('dashboard API error', res.status);
+        // Try Supabase fallback if API fails
+        await fetchAssignmentsFallbackFromSupabase();
+        return;
+      }
+
+      const json = await res.json();
+      const rawAssignments: AssignmentWithCourse[] = json.assignments || [];
+      if (rawAssignments && rawAssignments.length > 0) {
+        // normalize due_date -> ISO and ensure course.code exists
+        const assignments = rawAssignments.map((a) => {
+          try {
+            if (a.due_date) a.due_date = new Date(a.due_date).toISOString();
+          } catch (_) { /* leave as-is */ }
+          if (a.course && !a.course.code) a.course.code = a.course.course_id || a.course.courseId || a.course.code;
+          // attach local YYYY-MM-DD key to avoid timezone issues when grouping
+          try {
+            const d = a.due_date ? new Date(a.due_date) : new Date();
+            const yy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            (a as any).local_date = `${yy}-${mm}-${dd}`;
+          } catch (_) { (a as any).local_date = null; }
+          return a;
+        });
+
+        // debug: log incoming and normalized assignments to help trace missing items
+        console.debug('dashboard: raw assignments payload', rawAssignments);
+        console.debug('dashboard: normalized assignments', assignments.map((x) => ({ id: x.id, due_date: x.due_date, local_date: (x as any).local_date })));
+
+        const grouped = assignments.reduce((acc: Record<string, AssignmentWithCourse[]>, a: AssignmentWithCourse) => {
+          // group by a human-friendly local date string for display
+          const date = a.due_date ? new Date(a.due_date) : new Date();
+          const dateStr = date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+          acc[dateStr] = acc[dateStr] || [];
+          acc[dateStr].push(a);
+          return acc;
+        }, {} as Record<string, AssignmentWithCourse[]>);
+        const groupedArr = Object.entries(grouped).map(([date, assignments]) => ({ date, assignments })) as GroupedAssignment[];
+        setGroupedAssignments(groupedArr);
+      } else {
+        // API returned empty, try to populate from Supabase so dashboard has content
+        await fetchAssignmentsFallbackFromSupabase();
+      }
+    } catch (err) {
+      console.error('fetchAssignments error', err);
+      // Network/parse error — still try fallback once
+      await fetchAssignmentsFallbackFromSupabase();
+    }
+  };
+
+  // Refresh per-assignment submitted counts for assignments due within the last 7 days
+  useEffect(() => {
+    const now = Date.now();
+    const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+    // collect candidate assignment IDs
+    const candidates = Array.from(
+      new Set(
+        groupedAssignments
+          .flatMap((g) => g.assignments)
+          .filter((a) => {
+            if (!a?.due_date) return false;
+            const due = new Date(a.due_date).getTime();
+            return Number.isFinite(due) && due <= now && due >= weekAgo;
+          })
+          .map((a) => String(a.id))
+      )
+    );
+    if (candidates.length === 0) {
+      setHasSubmissions({});
+      return;
+    }
+    // limit to a reasonable batch (avoid too many network calls)
+    const limited = candidates.slice(0, 50);
+    (async () => {
+      try {
+        const entries = await Promise.all(
+          limited.map(async (aid) => {
+            try {
+              const resp: any = await supabase
+                .from('submissions')
+                .select('id', { count: 'exact', head: true })
+                .eq('assignment_id', aid)
+                .eq('status', 'submitted');
+              const count = Number(resp?.count ?? 0);
+              return [aid, count] as const;
+            } catch {
+              return [aid, 0] as const;
+            }
+          })
+        );
+        const map: Record<string, number> = {};
+        for (const [aid, count] of entries) map[aid] = count;
+        setHasSubmissions(map);
+      } catch {
+        setHasSubmissions({});
+      }
+    })();
+  }, [groupedAssignments]);
+
+  // Fetch submissions for a given assignment (directly from submissions table)
+  async function openSubmissionsForAssignment(a: AssignmentWithCourse) {
+    setCurrentAssignment(a);
+    setSubmissionsForAssignment(null);
+    setSubmissionsModalOpen(true);
+    try {
+      // Query submissions table by assignment_id (your schema uses assignment_id)
+      const { data, error } = await supabase
+        .from('submissions')
+        .select('*')
+        .eq('assignment_id', String(a.id))
+        .order('submitted_at', { ascending: false });
+      if (error) {
+        console.error('supabase submissions select error', error);
+        setSubmissionsForAssignment([]);
+        return;
+      }
+      const rows: any[] = Array.isArray(data) ? data : [];
+      setSubmissionsForAssignment(rows);
+      // count as opened for its course
+      recordOpenedCourse(a.course);
+    } catch (err: any) {
+      console.error('openSubmissionsForAssignment failed', err);
+      setSubmissionsForAssignment([]);
+    }
+  }
+
+  function closeSubmissionsModal() {
+    setSubmissionsModalOpen(false);
+    setSubmissionsForAssignment(null);
+    setCurrentAssignment(null);
+  }
+
+  // Grade a specific submission (open modal)
+  function openGradeForSubmission(sub: any) {
+    setGradingSubmission(sub);
+    setGradeValue(sub.grade ?? '');
+    setGradeFeedback(sub.feedback ?? '');
+    setGradingError(null);
+    setGradeModalOpen(true);
+  }
+  function closeGradeModal() {
+    setGradeModalOpen(false);
+    setGradingSubmission(null);
+    setGradeValue('');
+    setGradeFeedback('');
+    setGradingError(null);
+  }
+  async function submitGradeForSubmission() {
+    if (!gradingSubmission || (!Number.isFinite(Number(gradeValue)) && gradeValue !== '')) {
+      setGradingError('Enter a numeric grade');
+      return;
+    }
+    setGradingLoading(true);
+    setGradingError(null);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const graderId = sessionData?.session?.user?.id;
+      if (!graderId) throw new Error('Not authenticated');
+      const payload = {
+        grader_id: graderId,
+        submission_id: gradingSubmission.id,
+        grade: Number(gradeValue),
+        feedback: gradeFeedback || null,
+      };
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+      const res = await fetch(`${API_BASE}/users/courses/submissions/grade/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || `Failed: ${res.status}`);
+      // refresh submissions list for current assignment
+      if (currentAssignment) await openSubmissionsForAssignment(currentAssignment);
+      closeGradeModal();
+    } catch (err: any) {
+      setGradingError(err?.message || String(err));
+    } finally {
+      setGradingLoading(false);
+    }
+  }
+  // --- end new helpers ---
 
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -750,223 +1601,41 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
       .slice(0, 3)
   ), [groupedAssignments]);
 
-  const next7Days = Array.from({ length: 7 }).map((_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() + i);
-    return d;
-  });
-
-  // Use local timezone date key (YYYY-MM-DD) to avoid UTC shifts hiding "tomorrow" due dates
-  const dateKey = (d: Date) => {
-    const yy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${yy}-${mm}-${dd}`;
-  };
-
-  // helper: check if assignment due_date is in the past
-  function isPastDue(a: AssignmentWithCourse | null | undefined) {
-    try {
-      if (!a || !a.due_date) return false;
-      const due = new Date(a.due_date).getTime();
-      if (!Number.isFinite(due)) return false;
-      return due < Date.now();
-    } catch {
-      return false;
-    }
-  }
-
-  const assignmentsByDate = useMemo(() => {
-    const map = new Map<string, AssignmentWithCourse[]>();
-    groupedAssignments.forEach((g) => {
-      g.assignments.forEach((a) => {
-        // prefer precomputed local_date (safe) then fall back to computing from due_date
-        const key = (a as any).local_date ?? dateKey(new Date(a.due_date));
-        const arr = map.get(key) ?? [];
-        arr.push(a);
-        map.set(key, arr);
-      });
-    });
-    return map;
-  }, [groupedAssignments]);
-
-  // only include next-7 days that actually have deadlines
-  const upcomingDeadlineDays = useMemo(() => {
-    return next7Days.filter((d) => {
-      const key = dateKey(d);
-      const list = assignmentsByDate.get(key) ?? [];
-      return list.length > 0;
-    });
-  }, [next7Days, assignmentsByDate]);
-
-  function dayStatusFor(date: Date) {
-    const key = dateKey(date);
-    const list = assignmentsByDate.get(key) ?? [];
-    if (list.length === 0) return { label: 'No due', color: 'bg-gray-100 text-gray-600' };
-    if (list.some((a) => a.status === 'missing')) return { label: 'Due', color: 'bg-red-50 text-red-700' };
-    if (list.some((a) => a.status === 'submitted')) return { label: 'Submissions', color: 'bg-blue-50 text-blue-700' };
-    if (list.every((a) => a.status === 'graded')) return { label: 'Graded', color: 'bg-green-50 text-green-700' };
-    return { label: 'Due', color: 'bg-yellow-50 text-yellow-700' };
-  }
-
-  // Ready-to-grade list used by the "Ready to grade (past 7 days)" section
-  const readyToGradeAssignments = useMemo(() => {
-    const now = Date.now();
-    const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
-    return groupedAssignments
-      .flatMap((g) => g.assignments)
-      .filter((a) => {
-        if (!a?.due_date || a.status === 'graded') return false;
-        const due = new Date(a.due_date).getTime();
-        if (!Number.isFinite(due)) return false;
-        if (!(due <= now && due >= weekAgo)) return false; // past due within last 7 days
-        const count = hasSubmissions[String(a.id)] ?? 0;
-        return count > 0 || a.status === 'submitted';
-      })
-      .sort((a, b) => new Date(b.due_date).getTime() - new Date(a.due_date).getTime())
-      .slice(0, 8);
-  }, [groupedAssignments, hasSubmissions]);
-
-  const QuickActionButtons = () => (
-    <div className="flex flex-col gap-2">
-      {/* use normal navigation (push) so browser Back returns to the real previous page */}
-      <button type="button" onClick={() => { navigate('/instructor-dashboard?view=courses'); setActiveView('courses'); }} className="text-left px-3 py-2 border rounded-md">My courses</button>
-      <button type="button" onClick={() => { navigate('/instructor-dashboard?view=create'); setActiveView('create'); }} className="text-left px-3 py-2 border rounded-md">Create course</button>
-      <button onClick={() => navigate('/inbox')} className="text-left px-3 py-2 border rounded-md">Inbox</button>
+  // Submissions modal (rendered when open) — uses submissionsForAssignment & submissionsModalOpen
+  {submissionsModalOpen && currentAssignment && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/40" onClick={closeSubmissionsModal} />
+      <div className="relative bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-lg p-6 z-50 w-full max-w-2xl">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Submissions for: {currentAssignment.title}</h3>
+            <div className="text-xs text-slate-500 dark:text-slate-400">{currentAssignment.course?.code ?? ''}</div>
+          </div>
+          <div>
+            <button onClick={closeSubmissionsModal} className="px-3 py-1 border rounded">Close</button>
+          </div>
+        </div>
+        <div className="space-y-3 max-h-96 overflow-auto">
+          {(submissionsForAssignment ?? []).length === 0 ? (
+            <div className="text-sm text-slate-500">No submissions yet.</div>
+          ) : (
+            (submissionsForAssignment ?? []).map((s: any) => (
+              <div key={s.id} className="border rounded p-3 flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-semibold">{s.student?.email ?? s.student_id}</div>
+                  <div className="text-xs text-slate-500">{s.submitted_at ? new Date(s.submitted_at).toLocaleString() : ''}</div>
+                </div>
+                <div className="flex items-center gap-3">
+                  {s.file_url ? <a href={s.file_url} target="_blank" rel="noreferrer" className="text-indigo-600 text-sm">Download</a> : <span className="text-xs text-slate-500">No file</span>}
+                  <button onClick={() => openGradeForSubmission(s)} className="px-3 py-1 bg-indigo-600 text-white rounded-md text-sm">Grade</button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
     </div>
-  );
-
-  const assignmentsOpen = false; // Instructor quick-view modal can be added later if needed
-
-  // Minimal helper to record opened course (used by navigation/submission open)
-  const recordOpenedCourse = (course?: { id?: string | number; name?: string; title?: string; course_id?: string; code?: string }) => {
-    if (!course?.id) return;
-    const normalized = {
-      id: course.id,
-      title: course.name ?? course.title ?? '',
-      code: course.course_id ?? course.code ?? '',
-    };
-    // update recentOpenedCourses locally and persist
-    setRecentOpenedCourses((prev) => {
-      const filtered = prev.filter((c) => String(c.id) !== String(normalized.id));
-      const next = [normalized, ...filtered].slice(0, 4);
-      try { localStorage.setItem('instructor-recent-opened-courses', JSON.stringify(next)); } catch {}
-      return next;
-    });
-  };
-
-  // Navigate to a course (Courses view) and auto-open it
-  function goToCourse(course?: { id?: string | number; name?: string; title?: string; course_id?: string; code?: string }) {
-    if (!course?.id) return;
-    recordOpenedCourse(course);
-    const target = `/instructor-dashboard?view=courses&course_db_id=${encodeURIComponent(String(course.id))}`;
-    setActiveView('courses');
-    navigate(target, { state: { open_course_id: course.id } });
-  }
-
-  // Navigate to submissions for an assignment (prefers Courses view with focus)
-  function navigateToSubmissions(a: AssignmentWithCourse) {
-    if (!a) return;
-    recordOpenedCourse(a.course);
-    const courseId = a.course?.id;
-    if (!courseId) {
-      navigate(`/instructor/assignments/${a.id}/submissions`);
-      return;
-    }
-    const target = `/instructor-dashboard?view=courses&course_db_id=${encodeURIComponent(String(courseId))}`;
-    setActiveView('courses');
-    navigate(target, { state: { open_course_id: courseId, focus_assignment_id: a.id } });
-  }
-
-  // theme state (simplified)
-  const [theme, setTheme] = useState<'light' | 'dark'>(() =>
-    (typeof window !== 'undefined' && localStorage.getItem('theme') === 'dark') ? 'dark' : 'light'
-  );
-
-  // apply student-style theme (inject overrides + toggle html.dark)
-  useEffect(() => {
-    try { applyTheme(theme); } catch {}
-  }, [theme]);
-
-  function toggleTheme() {
-    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
-  }
-
-  // Student-style theme helpers
-  function applyTheme(t: 'light' | 'dark') {
-    try {
-      if (t === 'dark') {
-        removeLightStyles();
-        document.documentElement.classList.add('dark');
-        injectDarkStyles();
-      } else {
-        document.documentElement.classList.remove('dark');
-        removeDarkStyles();
-        injectLightStyles();
-        // ensure page background matches student light theme
-        document.body.style.backgroundColor = '#f9fafb';
-        document.documentElement.style.backgroundColor = '#f9fafb';
-      }
-      localStorage.setItem('theme', t);
-    } catch {}
-  }
-
-  function injectDarkStyles() {
-    if (document.getElementById('dark-theme-overrides')) return;
-    const css = `
-      :root { color-scheme: dark; }
-      body, .min-h-screen { background-color: #0b1220 !important; color: #e6eef8 !important; }
-      .bg-white { background-color: #0b1220 !important; }
-      .bg-gray-50 { background-color: #071025 !important; }
-      .text-slate-500, .text-slate-400 { color: #94a3b8 !important; }
-      .text-slate-600, .text-slate-700 { color: #cbd5e1 !important; }
-      .text-slate-800, .text-slate-900 { color: #e6eef8 !important; }
-      .border { border-color: rgba(255,255,255,0.06) !important; }
-      .shadow, .shadow-sm, .shadow-md, .shadow-lg { box-shadow: none !important; }
-      .bg-indigo-600 { background-color: #4f46e5 !important; }
-      .bg-red-600 { background-color: #ef4444 !important; }
-      .bg-green-50 { background-color: #052e1f !important; }
-      .bg-blue-50 { background-color: #071633 !important; }
-      a { color: #7dd3fc !important; }
-      input, textarea { background-color: #071025 !important; color: #e6eef8 !important; border-color: rgba(255,255,255,0.06) !important; }
-      .bg-gradient-to-b { background-image: linear-gradient(180deg,#071025,#071025) !important; }
-    `;
-    const s = document.createElement('style');
-    s.id = 'dark-theme-overrides';
-    s.innerHTML = css;
-    document.head.appendChild(s);
-  }
-
-  function removeDarkStyles() {
-    const el = document.getElementById('dark-theme-overrides');
-    if (el) el.remove();
-  }
-
-  function injectLightStyles() {
-    if (document.getElementById('light-theme-overrides')) return;
-    const css = `
-      body, .min-h-screen { background: #f9fafb !important; color: #1e293b !important; }
-      .bg-gray-50 { background-color: #f1f5f9 !important; }
-      .bg-white { background-color: #ffffff !important; }
-      .text-slate-800, .text-slate-900 { color: #1e293b !important; }
-      .text-slate-700 { color: #334155 !important; }
-      .text-slate-600 { color: #475569 !important; }
-      .text-slate-500, .text-slate-400 { color: #64748b !important; }
-      .border, .border-slate-200 { border-color: #e2e8f0 !important; }
-      .shadow-none, .shadow-sm { box-shadow: 0 1px 2px rgba(0,0,0,0.04) !important; }
-      input, textarea { background:#ffffff !important; color:#1e293b !important; border-color:#cbd5e1 !important; }
-      .light-surface { background:#f9fafb !important; }
-    `;
-    const s = document.createElement('style');
-    s.id = 'light-theme-overrides';
-    s.innerHTML = css;
-    document.head.appendChild(s);
-  }
-
-  function removeLightStyles() {
-    const el = document.getElementById('light-theme-overrides');
-    if (el) el.remove();
-  }
+  )}
 
   return (
     <div className="min-h-screen p-6 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100">
@@ -1125,6 +1794,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                                 >
                                   Grade
                                 </button>
+                                <button onClick={() => openEditDue(a)} className="ml-2 text-sm px-2 py-1 border rounded-md bg-white text-indigo-600">Edit due</button>
                               </div>
                             </div>
                           </article>
@@ -1137,25 +1807,37 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
 
               {/* Right column */}
               <aside className="space-y-6 lg:sticky lg:top-6 min-h-0">
-                {recentOpenedCourses.length > 0 && (
-                  <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl p-4">
-                    <h4 className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-3">Recently opened</h4>
-                    <div className="flex flex-col gap-2">
-                      {recentOpenedCourses.map((course) => (
-                        <button
-                          key={`opened-${course.id}`}
-                          onClick={() => goToCourse(course)}
-                          className="w-full text-left px-3 py-2 rounded-md border border-slate-100 text-sm text-slate-700 hover:bg-slate-50"
-                        >
-                          <div className="font-semibold">
-                            {course.title ? course.title : `Course ${course.id}`}
-                          </div>
-                          <div className="text-xs text-slate-400">{course.code}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                { (recentCourses && recentCourses.length > 0) && (
+                   <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl p-4">
+                     <h4 className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-3">Recently opened</h4>
+                     <div className="flex flex-col gap-2">
+-                      {recentOpenedCourses.map((course) => (
+-                        <button
+-                          key={`opened-${course.id}`}
+-                          onClick={() => goToCourse(course)}
+-                          className="w-full text-left px-3 py-2 rounded-md border border-slate-100 text-sm text-slate-700 hover:bg-slate-50"
+-                        >
+-                          <div className="font-semibold">
+-                            {course.title ? course.title : `Course ${course.id}`}
+-                          </div>
+-                          <div className="text-xs text-slate-400">{course.code}</div>
+-                        </button>
+-                      ))}
++                      {recentCourses.map((course) => (
++                        <button
++                          key={`recent-${course.id}`}
++                          onClick={() => goToCourse(course)}
++                          className="w-full text-left px-3 py-2 rounded-md border border-slate-100 text-sm text-slate-700 hover:bg-slate-50"
++                        >
++                          <div className="font-semibold">
++                            {course.title ? course.title : `Course ${course.id}`}
++                          </div>
++                          <div className="text-xs text-slate-400">{course.code ?? ''}</div>
++                        </button>
++                      ))}
+                     </div>
+                   </div>
+                 )}
 
                 <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl p-4">
                   <div className="flex items-center gap-3">

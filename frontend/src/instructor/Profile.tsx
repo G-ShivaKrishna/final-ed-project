@@ -30,7 +30,12 @@ export default function Profile(): JSX.Element {
     // theme-aware wrapper so header buttons render correctly in dark mode
     <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white dark:from-slate-900 dark:to-slate-900 p-6 text-slate-800 dark:text-slate-100">
       <div className="flex items-center gap-2 mb-4">
-        <button onClick={() => navigate('/instructor-dashboard?view=dashboard')} className="px-3 py-1 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">Dashboard</button>
+        <button
+          onClick={() => navigate('/instructor-dashboard?view=dashboard')}
+          className="px-3 py-1 rounded-md bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-600 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:ring-offset-2 dark:focus:ring-offset-slate-900"
+        >
+          Dashboard
+        </button>
       </div>
       <h2>Profile</h2>
       <p><strong>Username:</strong> {userData.username}</p>

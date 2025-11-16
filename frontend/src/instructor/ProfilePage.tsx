@@ -105,7 +105,7 @@ export default function InstructorProfilePage(): JSX.Element {
           <div className="flex items-center gap-2">
             <button
               onClick={() => navigate(-1)}
-              className="w-10 h-10 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 flex items-center justify-center"
+              className="w-10 h-10 rounded-md bg-slate-100 dark:bg-[rgba(14, 31, 31, 1)] text-slate-800 dark:text-slate-100 flex items-center justify-center"
             >
               <ChevronLeft size={18} />
             </button>
@@ -189,7 +189,12 @@ export default function InstructorProfilePage(): JSX.Element {
           </div>
 
           <div className="mt-6 flex justify-end">
-            <button onClick={() => navigate('/instructor-dashboard')} className="px-4 py-2 rounded-md bg-indigo-600 text-white">Back to dashboard</button>
+            <button
+              onClick={() => navigate('/instructor-dashboard')}
+              className="px-4 py-2 rounded-md bg-indigo-600 hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400 text-white transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:ring-offset-2 dark:focus:ring-offset-slate-800"
+            >
+              Back to dashboard
+            </button>
           </div>
         </div>
       </div>
