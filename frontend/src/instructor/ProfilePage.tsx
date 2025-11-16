@@ -10,6 +10,7 @@ export default function InstructorProfilePage(): JSX.Element {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<any>({});
   const [saving, setSaving] = useState(false);
+  const [coursesCount, setCoursesCount] = useState<number | null>(null);
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -33,6 +34,17 @@ export default function InstructorProfilePage(): JSX.Element {
         };
         setProfile(normalized);
         setDraft(normalized);
+      }
+
+      // Fetch courses count for instructor
+      const { data: courses, error: coursesErr } = await supabase
+        .from('courses')
+        .select('id')
+        .eq('instructor_id', userId);
+      if (!coursesErr && Array.isArray(courses)) {
+        setCoursesCount(courses.length);
+      } else {
+        setCoursesCount(null);
       }
     };
 
@@ -86,14 +98,18 @@ export default function InstructorProfilePage(): JSX.Element {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white p-6">
+    // make page theme-aware so controls (back button) look correct in dark mode
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white dark:from-slate-900 dark:to-slate-900 p-6 text-slate-800 dark:text-slate-100">
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center gap-4 mb-6">
           <div className="flex items-center gap-2">
-            <button onClick={() => navigate(-1)} className="w-10 h-10 rounded-md bg-slate-100 flex items-center justify-center">
+            <button
+              onClick={() => navigate(-1)}
+              className="w-10 h-10 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 flex items-center justify-center"
+            >
               <ChevronLeft size={18} />
             </button>
-            <button onClick={() => navigate('/instructor')} className="px-3 py-2 rounded-md bg-slate-100">Dashboard</button>
+            <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-2 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100">Dashboard</button>
           </div>
           <h1 className="text-2xl font-semibold text-slate-800">Instructor profile</h1>
         </div>
@@ -164,7 +180,7 @@ export default function InstructorProfilePage(): JSX.Element {
           <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="p-4 bg-gray-50 rounded">
               <div className="text-xs text-slate-500">Courses</div>
-              <div className="text-lg font-semibold">—</div>
+              <div className="text-lg font-semibold">{coursesCount !== null ? coursesCount : '—'}</div>
             </div>
             <div className="p-4 bg-gray-50 rounded">
               <div className="text-xs text-slate-500">Assignments</div>
@@ -173,7 +189,7 @@ export default function InstructorProfilePage(): JSX.Element {
           </div>
 
           <div className="mt-6 flex justify-end">
-            <button onClick={() => navigate('/instructor')} className="px-4 py-2 rounded-md bg-indigo-600 text-white">Back to dashboard</button>
+            <button onClick={() => navigate('/instructor-dashboard')} className="px-4 py-2 rounded-md bg-indigo-600 text-white">Back to dashboard</button>
           </div>
         </div>
       </div>

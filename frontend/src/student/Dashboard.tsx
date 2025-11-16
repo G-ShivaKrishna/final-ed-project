@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { ChevronRight, MoreVertical } from 'lucide-react';
+import { ChevronRight, MoreVertical, Plus, BookOpen } from 'lucide-react';
 import { supabase, Course, Assignment } from '../lib/supabase';
+import { useNavigate } from 'react-router-dom';
 
 type AssignmentWithCourse = Assignment & {
   course?: Course;
@@ -16,6 +17,7 @@ export default function Dashboard() {
   const [profileName, setProfileName] = useState<string | null>(null);
   const [enrolledCount, setEnrolledCount] = useState<number | null>(null);
   const [assignmentsDueCount, setAssignmentsDueCount] = useState<number | null>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     let channel: any | null = null;
@@ -232,6 +234,34 @@ export default function Dashboard() {
             <div className="p-6 bg-gray-50 rounded text-gray-600">You're all caught up 🎉</div>
           </div>
         )}
+
+        {/* Join Course panel */}
+        <div className="bg-white rounded-xl shadow p-4 mb-4">
+          <h2 className="text-lg font-medium">Join Course</h2>
+          <p className="text-sm text-slate-600 mt-1">Enter a course code or join via invitation.</p>
+          <div className="mt-3 flex gap-2">
+            <input placeholder="Course code" className="flex-1 px-3 py-2 border rounded" />
+            <button className="px-3 py-2 bg-indigo-600 text-white rounded inline-flex items-center gap-2">
+              <Plus size={16} /> Join
+            </button>
+          </div>
+
+          {/* New: Courses button shown below Join Course */}
+          <div className="mt-4 border-t pt-4">
+            <button
+              type="button"
+              onClick={() => navigate('/student/courses')}
+              className="w-full text-left px-3 py-2 rounded bg-slate-50 hover:bg-slate-100 border flex items-center gap-3"
+              aria-label="Open all courses"
+            >
+              <BookOpen size={18} className="text-slate-700" />
+              <div>
+                <div className="text-sm font-medium">Courses</div>
+                <div className="text-xs text-slate-500">View all your courses</div>
+              </div>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

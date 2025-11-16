@@ -91,7 +91,7 @@ export default function CoursesPage(): JSX.Element {
                 <button onClick={() => navigate(-1)} aria-label="Go back" className="w-10 h-10 rounded-md bg-white/20 flex items-center justify-center hover:bg-white/30">
                   <ChevronLeft size={18} />
                 </button>
-                <button onClick={() => navigate('/student')} aria-label="Dashboard" className="px-3 py-2 rounded-md bg-white/20 hover:bg-white/30 text-white text-sm">Dashboard</button>
+                <button onClick={() => navigate('/student-dashboard')} aria-label="Dashboard" className="px-3 py-2 rounded-md bg-white/20 hover:bg-white/30 text-white text-sm">Dashboard</button>
               </div>
               <div>
                 <h1 className="text-3xl font-bold">Explore courses</h1>

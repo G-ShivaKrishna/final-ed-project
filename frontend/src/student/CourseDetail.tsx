@@ -1,6 +1,60 @@
 import React from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { ChevronLeft } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+const API_BASE = (import.meta as any).env?.VITE_API_URL || window.location.origin;
+
+// Resolve a resource link into an absolute URL safe to open in a new tab.
+function resolveHref(raw?: string | null) : string | null {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (s.startsWith('http://') || s.startsWith('https://')) return s;
+  if (s.startsWith('//')) return window.location.protocol + s;
+  if (s.startsWith('/')) return window.location.origin + s;
+  return `${API_BASE.replace(/\/$/, '')}/${s.replace(/^\//, '')}`;
+}
+
+// Better extractor: checks content for explicit URLs, "Attachment:" patterns,
+// and common fields that may contain storage URLs. Returns a usable absolute href or null.
+function extractUrlFromTextOrResource(rawText?: string | null, resource?: any): string | null {
+  const t = String(rawText ?? '').trim();
+  // 1) explicit http(s) URL inside text
+  const m = t.match(/https?:\/\/[^\s'"]+/i);
+  if (m) return resolveHref(m[0]);
+
+  // 2) common "Attachment:" or "Attachment - " pattern followed by a URL
+  const attach = t.match(/attachment[:\s-]*([^\s'"]+)/i);
+  if (attach && attach[1]) {
+    return resolveHref(attach[1]);
+  }
+
+  // 3) if resource object provided, try a few known fields
+  if (resource && typeof resource === 'object') {
+    const candidates = ['file_url', 'url', 'link', 'video_url', 'content', 'path', 'storage_path'];
+    for (const k of candidates) {
+      const v = resource[k];
+      if (v) {
+        // if content field contains an embedded URL, reuse that extraction
+        if (k === 'content') {
+          const cm = String(v).match(/https?:\/\/[^\s'"]+/i);
+          if (cm) return resolveHref(cm[0]);
+        } else {
+          // accept raw URL or relative path
+          const s = String(v).trim();
+          if (s) {
+            // ignore placeholder '#'
+            if (s === '#' || s === '') continue;
+            return resolveHref(s);
+          }
+        }
+      }
+    }
+  }
+
+  // 4) nothing found
+  return null;
+}
 
 type Material = { id: string; title: string; uploadedAt: string; link?: string; description?: string; type?: string };
 type Assignment = { id: string; title: string; due_date: string; status: string; points?: number; description?: string; postedAt?: string; submitted_file?: string };
@@ -52,21 +106,207 @@ const SAMPLE_ASSIGNMENTS: Record<string, Assignment[]> = {
 };
 
 export default function CourseDetail(): JSX.Element {
-  const { id } = useParams();
+  const params = useParams();
+  const idParam = (params as any).id ?? (params as any).courseId ?? (params as any).course_db_id ?? null;
   const navigate = useNavigate();
-  const course = SAMPLE_COURSES.find((c) => c.id === id) ?? { id: id ?? 'unknown', code: id ?? '', title: 'Course' };
+  const location = useLocation();
+  // prefer course passed from the course list via navigation state
+  const stateCourseRaw = (location.state as any)?.course ?? (location.state as any)?.courseItem ?? null;
+
+  // helper: create a readable name from an id-like string (fallback when backend/title not available)
+  function prettifyId(raw?: string | null) {
+    if (!raw) return 'Course';
+    try {
+      let s = String(raw);
+      s = decodeURIComponent(s);
+      s = s.replace(/[_\-+]+/g, ' ').replace(/\s+/g, ' ').trim();
+      s = s.split(' ').map((w) => w ? (w[0].toUpperCase() + w.slice(1)) : '').join(' ');
+      return s || 'Course';
+    } catch {
+      return String(raw);
+    }
+  }
+
+  // normalize many possible backend course shapes into { id, code, title }
+  function normalizeCourseObject(obj: any, fallbackId?: string | null) {
+    if (!obj || typeof obj !== 'object') return { id: fallbackId ?? String(fallbackId ?? ''), code: '', title: prettifyId(fallbackId) };
+    const title = obj.title || obj.name || obj.course_name || obj.display_name || obj.courseTitle || obj.courseTitleString || obj.label || obj.full_name;
+    const code = obj.code || obj.course_code || obj.courseId || obj.course_id || obj.courseIdString || '';
+    // ensure correct precedence when mixing || and ??
+    const id = obj.id || obj.course_id || obj.courseId || (fallbackId ?? '');
+    return { id: String(id), code: String(code || ''), title: String(title || code || prettifyId(fallbackId)) };
+  }
+
+  // try to find a matching sample course by id, code or title (case-insensitive)
+  function findSampleCourseMatch(raw?: string | null) {
+    if (!raw) return null;
+    const key = String(raw).trim().toLowerCase();
+    return SAMPLE_COURSES.find((c) => {
+      if (!c) return false;
+      return [c.id, c.code, c.title].some((v) => String(v ?? '').trim().toLowerCase() === key);
+    }) ?? null;
+  }
+
+  // keep course metadata in state so we can update it from API responses
+  const stateCourse = stateCourseRaw ? normalizeCourseObject(stateCourseRaw, idParam) : null;
+  const sampleMatch = stateCourse ?? findSampleCourseMatch(idParam);
+  const initialCourse = sampleMatch ?? normalizeCourseObject(null, idParam);
+  const [course, setCourse] = React.useState(initialCourse);
+  // ensure course state updates when idParam changes (page reload with different id)
+  React.useEffect(() => {
+    // prefer navigation state first (if user came from the list), then SAMPLE match, then prettified id
+    const match = stateCourse ?? findSampleCourseMatch(idParam);
+    setCourse(match ?? normalizeCourseObject(null, idParam));
+  }, [idParam]);
   const [tab, setTab] = React.useState<'syllabus' | 'assignments'>('syllabus');
 
-  const syllabus = SAMPLE_SYLLABUS[id as string] ?? [];
-  const initialAssignments = SAMPLE_ASSIGNMENTS[id as string] ?? [];
-  const [assignmentsState, setAssignmentsState] = React.useState<Assignment[]>(initialAssignments);
+  // UI state: prefer backend data but fall back to SAMPLE fixtures
+  const [syllabusState, setSyllabusState] = React.useState<Material[]>(SAMPLE_SYLLABUS[idParam as string] ?? []);
+  const [assignmentsState, setAssignmentsState] = React.useState<Assignment[]>(SAMPLE_ASSIGNMENTS[idParam as string] ?? []);
+  const [loading, setLoading] = React.useState<boolean>(!!idParam);
+  const [error, setError] = React.useState<string | null>(null);
 
   // file upload refs/state for submitting assignments (PDF only)
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [pendingUploadFor, setPendingUploadFor] = React.useState<string | number | null>(null);
+  const [uploadCourseId, setUploadCourseId] = React.useState<string | number | null>(idParam);
   const [uploadError, setUploadError] = React.useState<string | null>(null);
   const [uploading, setUploading] = React.useState(false);
-  
+
+  // helper: try getPublicUrl then fall back to a signed URL for private buckets
+  async function getPublicUrlOrSigned(bucket: string, path: string) {
+    try {
+      const pubRes = await supabase.storage.from(bucket).getPublicUrl(path);
+      const publicUrl = (pubRes as any)?.data?.publicUrl || (pubRes as any)?.publicURL || (pubRes as any)?.public_url || '';
+      if (publicUrl) return publicUrl;
+
+      // fall back to signed URL (valid for 1 hour)
+      const { data: signedData, error: signedErr } = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60);
+      if (!signedErr && signedData?.signedURL) return signedData.signedURL;
+    } catch (e) {
+      console.warn('getPublicUrlOrSigned failed', e);
+    }
+    return '';
+  }
+
+  // helper: upload file to 'submissions' bucket and return a usable URL (public or signed)
+  async function uploadSubmissionFile(file: File, courseId: string | number, assignmentId: string | number, studentId: string) {
+    if (!file) return '';
+    try {
+      const path = `${courseId}/${assignmentId}/${studentId}_${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+      const { data, error } = await supabase.storage.from('submissions').upload(path, file, { upsert: true });
+      if (error) throw error;
+      const publicUrl = await getPublicUrlOrSigned('submissions', path);
+      return publicUrl;
+    } catch (err) {
+      console.warn('uploadSubmissionFile failed', err);
+      return '';
+    }
+  }
+
+  // fetch course metadata early so header shows correct name (independent of current tab)
+  React.useEffect(() => {
+    let mounted = true;
+    async function fetchCourseMeta() {
+      if (!idParam) return;
+      try {
+        const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+        // try a dedicated metadata endpoint; fallback to assignments/resources shapes
+        const urls = [
+          `${API_BASE}/users/courses/detail/?course_db_id=${encodeURIComponent(String(idParam))}`,
+          `${API_BASE}/users/courses/?course_db_id=${encodeURIComponent(String(idParam))}`,
+        ];
+        for (const url of urls) {
+          try {
+            const res = await fetch(url);
+            if (!res.ok) continue;
+            const j = await res.json().catch(() => null);
+            if (!j) continue;
+            // try common locations for a course object
+            const candidate = j.course ?? j.data?.course ?? j.data ?? j;
+            if (candidate && typeof candidate === 'object') {
+              const normalized = normalizeCourseObject(candidate, idParam);
+              if (mounted) setCourse((prev) => ({ ...prev, ...normalized }));
+              return;
+            }
+          } catch { /* try next url */ }
+        }
+      } catch (_) { /* ignore metadata fetch errors */ }
+    }
+    fetchCourseMeta();
+    return () => { mounted = false; };
+  }, [idParam]);
+
+  // fetch only the data relevant to the active tab (so reload/fetch is per-tab)
+  React.useEffect(() => {
+    let mounted = true;
+    async function fetchCourseData() {
+      if (!idParam) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const userId = sessionData?.session?.user?.id;
+        const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+
+        if (tab === 'syllabus') {
+          try {
+            const rres = await fetch(`${API_BASE}/users/courses/resources/?course_db_id=${encodeURIComponent(String(idParam))}&user_id=${encodeURIComponent(String(userId ?? ''))}`);
+            const rjson = await rres.json().catch(() => []);
+            if (rres.ok && mounted) {
+              const payload = Array.isArray(rjson) ? rjson : (rjson?.data ?? []);
+              setSyllabusState(payload);
+              // merge course metadata if present (accept multiple shapes)
+              const courseSource = (Array.isArray(rjson) ? rjson : rjson)?.course ?? rjson?.course ?? (payload && (payload.course || payload[0]?.course));
+              if (courseSource) {
+                const normalized = normalizeCourseObject(courseSource, idParam);
+                setCourse((prev) => ({ ...prev, ...normalized }));
+              } else if (rjson && typeof rjson === 'object' && (rjson.title || rjson.name || rjson.course_name)) {
+                setCourse((prev) => ({ ...prev, ...normalizeCourseObject(rjson, idParam) }));
+              }
+            }
+          } catch (_e) {
+            // keep sample on error
+          }
+        } else if (tab === 'assignments') {
+          try {
+            const ares = await fetch(`${API_BASE}/users/courses/assignments/?course_db_id=${encodeURIComponent(String(idParam))}&user_id=${encodeURIComponent(String(userId ?? ''))}`);
+            const ajson = await ares.json().catch(() => []);
+            if (ares.ok && mounted) {
+              const normalized = (Array.isArray(ajson) ? ajson : (ajson?.data ?? [])).map((a: any) => {
+                // ensure due_date is ISO for consistent display
+                if (a.due_date) {
+                  try { a.due_date = new Date(a.due_date).toISOString(); } catch (_) {}
+                }
+                // normalize nested course object on each assignment if present
+                if (a.course && typeof a.course === 'object') {
+                  a.course = { ...a.course, ...(normalizeCourseObject(a.course, idParam)) };
+                }
+                return a;
+              });
+              if (normalized.length) {
+                setAssignmentsState(normalized);
+                // if first assignment contains course metadata, use it to update header
+                const firstCourse = normalized[0]?.course || ajson?.course || ajson?.data?.course;
+                if (firstCourse) {
+                  setCourse((prev) => ({ ...prev, ...normalizeCourseObject(firstCourse, idParam) }));
+                }
+              }
+            }
+          } catch (_e) {
+            // keep sample on error
+          }
+        }
+      } catch (err: any) {
+        if (mounted) setError('Failed to load course data');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    fetchCourseData();
+    return () => { mounted = false; };
+    // re-run when idParam or active tab changes
+  }, [idParam, tab]);
 
   function markAsSubmitted(id: string | number, filename?: string) {
     setAssignmentsState((prev) => prev.map((m) => (m.id === id ? { ...m, status: m.status === 'graded' ? m.status : 'submitted', submitted_file: filename ?? m.submitted_file } : m)));
@@ -88,13 +328,57 @@ export default function CourseDetail(): JSX.Element {
       return;
     }
 
-    setUploading(true);
-    setUploadError(null);
-    setTimeout(() => {
-      markAsSubmitted(idFor, file.name);
-      setUploading(false);
-      setPendingUploadFor(null);
-    }, 700);
+    // upload to storage then POST to backend submit endpoint with public URL
+    (async () => {
+      setUploading(true);
+      setUploadError(null);
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const studentId = sessionData?.session?.user?.id;
+        if (!studentId) throw new Error('Not authenticated');
+        const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+        const courseDbId = uploadCourseId ?? idParam;
+
+        const publicUrl = await uploadSubmissionFile(file, courseDbId ?? 'public', idFor, studentId);
+        if (!publicUrl) throw new Error('Upload failed');
+
+        const body = { student_id: studentId, assignment_id: idFor, file_url: publicUrl };
+        const res = await fetch(`${API_BASE}/users/courses/assignments/submit/`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setUploadError(j?.error || `Submit failed: ${res.status}`);
+          markAsSubmitted(idFor, file.name);
+        } else {
+          // successful submit: mark locally and refresh assignments from backend
+          markAsSubmitted(idFor, file.name);
+          // refresh course assignments from backend to pull saved submission record
+          if (idParam) {
+            // re-run fetchCourseData
+            try {
+              const { data: sessionData2 } = await supabase.auth.getSession();
+              const userId = sessionData2?.session?.user?.id;
+              const ares = await fetch(`${API_BASE}/users/courses/assignments/?course_db_id=${encodeURIComponent(String(idParam))}&user_id=${encodeURIComponent(String(userId ?? ''))}`);
+              const ajson = await ares.json().catch(() => []);
+              if (ares.ok) {
+                const normalized = (Array.isArray(ajson) ? ajson : (ajson?.data ?? [])).map((a: any) => {
+                  if (a.due_date) { try { a.due_date = new Date(a.due_date).toISOString(); } catch (_) {} }
+                  return a;
+                });
+                if (normalized.length) setAssignmentsState(normalized);
+              }
+            } catch (_e) { /* ignore */ }
+          }
+        }
+      } catch (err: any) {
+        setUploadError(err?.message || String(err));
+        markAsSubmitted(idFor, file.name);
+      } finally {
+        setUploading(false);
+        setPendingUploadFor(null);
+      }
+    })();
   }
 
   return (
@@ -104,8 +388,12 @@ export default function CourseDetail(): JSX.Element {
           <button onClick={() => navigate(-1)} className="w-10 h-10 rounded-md bg-white shadow flex items-center justify-center"> <ChevronLeft size={18} /></button>
           <div>
             <h1 className="text-2xl font-semibold">{course.title}</h1>
-            <div className="text-sm text-slate-500">{course.code}</div>
+            {/* show code when it is meaningful and distinct from the title */}
+            <div className="text-sm text-slate-500">
+              {(course.code && course.code.trim() && course.code !== course.title) ? course.code : ''}
+            </div>
           </div>
+          {/* header actions (no join button) */}
         </div>
 
         <div className="bg-white rounded-xl shadow p-4">
@@ -116,21 +404,65 @@ export default function CourseDetail(): JSX.Element {
 
           {tab === 'syllabus' ? (
             <div>
-              {syllabus.length === 0 ? (
+              {loading ? (
+                <div className="text-sm text-slate-500">Loading…</div>
+              ) : !syllabusState || syllabusState.length === 0 ? (
                 <div className="text-sm text-slate-500">No syllabus materials posted yet.</div>
               ) : (
                 <ul className="space-y-3">
-                  {syllabus.map((m) => (
+                  {syllabusState.map((m) => (
                     <li key={m.id} className="p-3 border rounded flex items-center justify-between">
                       <div>
                         <div className="flex items-center gap-2">
                           <div className="font-medium">{m.title}</div>
                           {m.type && <span className="text-xs text-slate-500 px-2 py-1 rounded bg-slate-100">{m.type}</span>}
                         </div>
-                        {m.description && <div className="text-sm text-slate-600 mt-1">{m.description}</div>}
-                        <div className="text-xs text-slate-500 mt-2">Uploaded {m.uploadedAt}</div>
+                        {m.description && (
+                          <div className="text-sm text-slate-600 mt-1">
+                            {(() => {
+                              // use robust extractor which also checks for "Attachment:" and resource fields
+                              const url = extractUrlFromTextOrResource(m.description, m);
+                              if (url) {
+                                // show the descriptive text before the URL if present
+                                const before = String(m.description ?? '').split(url)[0];
+                                return (
+                                  <>
+                                    {before && <span>{before}</span>}
+                                    <div>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); window.open(url, '_blank', 'noopener'); }}
+                                        className="text-indigo-600 underline"
+                                      >
+                                        Download attachment
+                                      </button>
+                                    </div>
+                                  </>
+                                );
+                              }
+                              return <span>{m.description}</span>;
+                            })()}
+                          </div>
+                        )}
+                        <div className="text-xs text-slate-500 mt-2">Uploaded {m.uploadedAt ?? m.created_at ?? ''}</div>
                       </div>
-                      <a href={m.link} className="text-indigo-600">View</a>
+                      {(() => {
+                        // prefer explicit fields, then content text; robustly extract a real URL
+                        const href = extractUrlFromTextOrResource(m.link ?? m.video_url ?? null, m) ?? extractUrlFromTextOrResource(m.description, m);
+                        if (!href) {
+                          return <span className="text-indigo-600 cursor-default">View</span>;
+                        }
+                        return (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); window.open(href, '_blank', 'noopener'); }}
+                            className="text-indigo-600 underline"
+                            aria-label={`Open ${m.title ?? 'resource'}`}
+                          >
+                            View
+                          </button>
+                        );
+                      })()}
                     </li>
                   ))}
                 </ul>
@@ -138,7 +470,9 @@ export default function CourseDetail(): JSX.Element {
             </div>
           ) : (
             <div>
-              {assignmentsState.length === 0 ? (
+              {loading ? (
+                <div className="text-sm text-slate-500">Loading…</div>
+              ) : assignmentsState.length === 0 ? (
                 <div className="text-sm text-slate-500">No assignments posted yet.</div>
               ) : (
                 <ul className="space-y-3">
@@ -147,11 +481,41 @@ export default function CourseDetail(): JSX.Element {
                       <div className="flex items-center justify-between">
                         <div>
                           <div className="font-medium">{a.title}</div>
-                          {a.description && <div className="text-sm text-slate-600 mt-1">{a.description}</div>}
-                          <div className="text-xs text-slate-500 mt-2">Due {new Date(a.due_date).toLocaleDateString()}</div>
+                          {a.description && (
+                            <div className="text-sm text-slate-600 mt-1">
+                              {(() => {
+                                const url = extractUrlFromTextOrResource(a.description, a);
+                                if (url) {
+                                  const before = String(a.description ?? '').split(url)[0];
+                                  return (
+                                    <>
+                                      {before && <span>{before}</span>}
+                                      <div>
+                                        <button type="button" onClick={(e) => { e.stopPropagation(); window.open(url, '_blank', 'noopener'); }} className="text-indigo-600 underline">
+                                          Download attachment
+                                        </button>
+                                      </div>
+                                    </>
+                                  );
+                                }
+                                return <span>{a.description}</span>;
+                              })()}
+                            </div>
+                          )}
+                          {/* if backend returned submission object with file_url, render download link */}
+                          {a.submission?.file_url && (
+                            <div className="text-xs text-slate-600 mt-1"><a href={a.submission.file_url} target="_blank" rel="noreferrer" className="text-indigo-600">Download your submission</a></div>
+                          )}
+                          <div className="text-xs text-slate-500 mt-2">Due {a.due_date ? new Date(a.due_date).toLocaleDateString() : 'No due date'}</div>
                           {a.postedAt && <div className="text-xs text-slate-400">Posted {a.postedAt}</div>}
                         </div>
-                        <div className="text-xs text-slate-500">{a.points ?? '-'} pts</div>
+                        {/* Show earned grade / max points when available, otherwise show assignment max points.
+                            Default max to 10 when instructor didn't provide points. */}
+                        <div className="text-xs text-slate-500">
+                          {a.submission?.grade !== undefined && a.submission?.grade !== null
+                            ? `${a.submission.grade} / ${a.points ?? 10} pts`
+                            : `${a.points ?? 10} pts`}
+                        </div>
                       </div>
                       <div className="mt-2 text-xs text-slate-600">Status: {a.status}{a.submitted_file ? ` — ${a.submitted_file}` : ''}</div>
                       <div className="mt-2">
