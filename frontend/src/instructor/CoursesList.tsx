@@ -593,7 +593,20 @@ export default function CoursesList(): JSX.Element {
               <div className="text-xs text-slate-500">{c.created_at ? new Date(c.created_at).toLocaleDateString() : ''}</div>
               <div className="mt-2">
                 <div className="flex items-center gap-2">
-                  <button onClick={() => openCourseModal(c)} className="text-sm text-indigo-600 hover:underline">Open</button>
+                  {/* open in-place (fetch data) AND update URL so navigation works */}
+                  <button
+                    onClick={async () => {
+                      // open the in-page course view (loads assignments, students, etc.)
+                      await openCourseModal(c);
+                      // update URL so users can share / use back/forward
+                      urlNavigate(`/instructor-dashboard?view=course&course_db_id=${encodeURIComponent(c.id)}`, {
+                        state: { course: c },
+                      });
+                    }}
+                    className="text-sm text-indigo-600 hover:underline"
+                  >
+                    Open
+                  </button>
                   <button onClick={() => deleteCourse(c)} className="text-sm text-red-600 hover:underline">Delete</button>
                 </div>
               </div>
