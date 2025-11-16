@@ -27,10 +27,11 @@ export default function Profile(): JSX.Element {
   if (!userData) return <p>Loading...</p>;
 
   return (
-    <div>
+    // theme-aware wrapper so header buttons render correctly in dark mode
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white dark:from-slate-900 dark:to-slate-900 p-6 text-slate-800 dark:text-slate-100">
       <div className="flex items-center gap-2 mb-4">
-        <button onClick={() => navigate(-1)} className="px-3 py-1 border rounded-md">Back</button>
-        <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-1 border rounded-md">Dashboard</button>
+        <button onClick={() => navigate(-1)} className="px-3 py-1 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">Back</button>
+        <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-1 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">Dashboard</button>
       </div>
       <h2>Profile</h2>
       <p><strong>Username:</strong> {userData.username}</p>

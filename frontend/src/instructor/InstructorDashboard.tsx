@@ -1306,10 +1306,9 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
             <div className="absolute inset-0 bg-black/40" onClick={closeEditDue} />
             {/* modal: ensure dark bg and readable text */}
             <div className="relative bg-white dark:bg-slate-800 rounded-lg p-6 z-50 w-full max-w-md border border-slate-200 dark:border-slate-700">
-               <h3 className="text-lg mb-2">Edit due date</h3>
--              <div className="text-sm text-slate-600 mb-3">{editingAssignment.title}</div>
-+              <div className="text-sm text-slate-600 dark:text-slate-400 mb-3">{editingAssignment.title}</div>
-               <label className="block text-xs text-slate-600 mb-2">Due date and time</label>
+ <h3 className="text-lg mb-2">Edit due date</h3>
+ <div className="text-sm text-slate-600 dark:text-slate-400 mb-3">{editingAssignment.title}</div>
+ <label className="block text-xs text-slate-600 mb-2">Due date and time</label>
                <input
                  type="datetime-local"
                  value={editDueValue}
@@ -1344,4 +1343,5 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
          )}
        </div>
      </div>
-  
+  );
+}
