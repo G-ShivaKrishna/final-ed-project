@@ -604,7 +604,10 @@ export default function CoursesList(): JSX.Element {
                       // open the in-page course view (loads assignments, students, etc.)
                       await openCourseModal(c);
                       // update URL so users can share / use back/forward
-                      urlNavigate(`/instructor-dashboard?view=course&course_db_id=${encodeURIComponent(c.id)}`, {
+                      // use view=courses (plural) so InstructorDashboard's view parsing picks this up
+                      // this navigation is a user action that should create a history entry (push),
+                      // so we keep the default (no replace).
+                      urlNavigate(`/instructor-dashboard?view=courses&course_db_id=${encodeURIComponent(c.id)}`, {
                         state: { course: c },
                       });
                     }}
