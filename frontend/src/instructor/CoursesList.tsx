@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import SubmissionList from '../components/SubmissionList';
 import { fetchCourseSubmissions } from '../lib/api';
 
 type Course = {
@@ -21,7 +20,7 @@ type JoinRequest = {
 
 export default function CoursesList(): JSX.Element {
   const location = useLocation();
-  const urlNavigate = useNavigate();
+  const navigate = useNavigate();
 
   const [courses, setCourses] = useState<Course[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -47,7 +46,6 @@ export default function CoursesList(): JSX.Element {
   const [editResForm, setEditResForm] = useState({ title: '', content: '', video_url: '', type: 'syllabus' as 'syllabus' | 'video' });
 
   const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
-  const navigate = useNavigate();
 
   // file upload state & refs for assignment/resource attachments
   const [assignFile, setAssignFile] = useState<File | null>(null);
@@ -536,6 +534,55 @@ export default function CoursesList(): JSX.Element {
     }
   }
 
+  // missing grading handlers
+  function openGradeModal(sub: any) {
+    setGradingSubmission(sub);
+    setGradeValue(sub?.grade ?? '');
+    setGradeFeedback(sub?.feedback ?? '');
+    setGradingError(null);
+    setGradeModalOpen(true);
+  }
+  function closeGradeModal() {
+    setGradeModalOpen(false);
+    setGradingSubmission(null);
+    setGradeValue('');
+    setGradeFeedback('');
+    setGradingError(null);
+  }
+  async function submitGrade() {
+    if (!gradingSubmission || (!Number.isFinite(Number(gradeValue)) && gradeValue !== '')) {
+      setGradingError('Enter a numeric grade');
+      return;
+    }
+    setGradingLoading(true);
+    setGradingError(null);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const graderId = sessionData?.session?.user?.id;
+      if (!graderId) throw new Error('Not authenticated');
+      const payload = {
+        grader_id: graderId,
+        submission_id: gradingSubmission.id,
+        grade: Number(gradeValue),
+        feedback: gradeFeedback || null,
+      };
+      const res = await fetch(`${API_BASE}/users/courses/submissions/grade/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || `Failed: ${res.status}`);
+      // refresh current course data
+      if (selectedCourse) await openCourseModal(selectedCourse);
+      closeGradeModal();
+    } catch (err: any) {
+      setGradingError(err?.message || String(err));
+    } finally {
+      setGradingLoading(false);
+    }
+  }
+
   useEffect(() => {
     // If the URL (or navigation state) requests opening a specific course, auto-open it.
     // Allows InstructorDashboard to navigate to ?view=courses&course_db_id=... and have the course modal open.
@@ -612,7 +659,7 @@ export default function CoursesList(): JSX.Element {
                       // use view=courses (plural) so InstructorDashboard's view parsing picks this up
                       // this navigation is a user action that should create a history entry (push),
                       // so we keep the default (no replace).
-                      urlNavigate(`/instructor-dashboard?view=courses&course_db_id=${encodeURIComponent(c.id)}`, {
+                      navigate(`/instructor-dashboard?view=courses&course_db_id=${encodeURIComponent(c.id)}`, {
                         state: { course: c },
                       });
                     }}
@@ -911,36 +958,7 @@ export default function CoursesList(): JSX.Element {
             </div>
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => setEditResOpen(false)} className="px-3 py-1 border rounded">Cancel</button>
-              <button onClick={async () => {
-                // submit update
-                try {
-                  setError(null);
-                  const { data: sessionData } = await supabase.auth.getSession();
-                  const instructorId = sessionData?.session?.user?.id;
-                  if (!instructorId) throw new Error('Not authenticated');
-                  const payload: any = {
-                    instructor_id: instructorId,
-                    resource_id: editingResource.id,
-                    title: editResForm.title,
-                    type: editResForm.type,
-                  };
-                  if (editResForm.type === 'syllabus') payload.content = editResForm.content;
-                  else payload.video_url = editResForm.video_url;
-                  const res = await fetch(`${API_BASE}/users/courses/resources/update/`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                  });
-                  const body = await res.json().catch(() => ({}));
-                  if (!res.ok) throw new Error(body?.error || `Update failed: ${res.status}`);
-                  // refresh modal data
-                  if (selectedCourse) await openCourseModal(selectedCourse);
-                  setEditResOpen(false);
-                  setEditingResource(null);
-                } catch (err: any) {
-                  setError(err?.message || String(err));
-                }
-              }} className="px-3 py-1 bg-indigo-600 text-white rounded">Save changes</button>
+              <button onClick={updateResource} className="px-3 py-1 bg-indigo-600 text-white rounded">Save changes</button>
             </div>
           </div>
         </div>

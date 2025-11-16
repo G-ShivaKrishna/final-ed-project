@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Calendar, CheckCircle, Clock, MoreVertical, User, XCircle, Sun, Moon } from 'lucide-react';
+import { CheckCircle, Clock, MoreVertical, User, XCircle, Sun, Moon } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import ChatBox from '../student/ChatBot';
 import CreateCourse from './CreateCourse';
 import CoursesList from './CoursesList';
 
@@ -1070,7 +1069,10 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                             <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{a.title}</div>
                             <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{a.course?.code ?? '—'} • due {new Date(a.due_date).toLocaleString()}</div>
                           </div>
-                          <button className="text-xs px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 text-indigo-600 hover:bg-indigo-50">
+                          <button
+                            onClick={() => navigateToSubmissions(a)}
+                            className="text-xs px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 text-indigo-600 hover:bg-indigo-50"
+                          >
                             Open submissions
                           </button>
                         </article>
