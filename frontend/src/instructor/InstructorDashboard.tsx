@@ -53,6 +53,107 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
   const [gradingError, setGradingError] = useState<string | null>(null);
   // --- end new state ---
 
+  // --- New: edit-due state & helpers ---
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editingAssignment, setEditingAssignment] = useState<AssignmentWithCourse | null>(null);
+  const [editDueValue, setEditDueValue] = useState<string>(''); // local input value (YYYY-MM-DDTHH:mm)
+  const [editLoading, setEditLoading] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  function openEditDue(a: AssignmentWithCourse) {
+    setEditingAssignment(a);
+    // try to set a suitable input default (local datetime)
+    try {
+      const d = a.due_date ? new Date(a.due_date) : new Date();
+      // input[type=datetime-local] expects "YYYY-MM-DDTHH:mm"
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      const hh = String(d.getHours()).padStart(2, '0');
+      const min = String(d.getMinutes()).padStart(2, '0');
+      setEditDueValue(`${yyyy}-${mm}-${dd}T${hh}:${min}`);
+    } catch {
+      setEditDueValue('');
+    }
+    setEditError(null);
+    setEditModalOpen(true);
+  }
+
+  function closeEditDue() {
+    setEditModalOpen(false);
+    setEditingAssignment(null);
+    setEditDueValue('');
+    setEditError(null);
+    setEditLoading(false);
+  }
+
+  async function submitEditDue() {
+    if (!editingAssignment) return;
+    if (!editDueValue) { setEditError('Enter a date & time'); return; }
+
+    // convert local input to ISO UTC string (backend expects ISO)
+    let iso: string;
+    try {
+      iso = new Date(editDueValue).toISOString();
+      if (!iso) throw new Error('Invalid date');
+    } catch {
+      setEditError('Invalid date/time');
+      return;
+    }
+
+    setEditLoading(true);
+    setEditError(null);
+    try {
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+      const id = String(editingAssignment.id);
+      const payload = { due_date: iso };
+      const headers = { 'Content-Type': 'application/json' };
+
+      // Try common update endpoints in order (stop when one returns ok)
+      const attempts = [
+        { url: `${API_BASE}/users/courses/assignments/${id}/`, method: 'PATCH', body: payload },
+        { url: `${API_BASE}/users/assignments/${id}/`, method: 'PATCH', body: payload },
+        { url: `${API_BASE}/users/courses/assignments/update/`, method: 'POST', body: { assignment_id: id, due_date: iso } },
+        { url: `${API_BASE}/users/assignments/update/`, method: 'POST', body: { assignment_id: id, due_date: iso } },
+      ];
+
+      let success = false;
+      let lastErr: any = null;
+      for (const at of attempts) {
+        try {
+          const res = await fetch(at.url, {
+            method: at.method,
+            headers,
+            body: JSON.stringify(at.body),
+          });
+          if (res.ok) {
+            success = true;
+            break;
+          }
+          // if 404/405/400, capture and try next
+          const txt = await res.text().catch(() => '');
+          lastErr = `Endpoint ${at.url} failed: ${res.status} ${txt}`;
+          // continue trying next
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+
+      if (!success) {
+        throw new Error(typeof lastErr === 'string' ? lastErr : (lastErr?.message || 'Update failed'));
+      }
+
+      // refresh assignments and close modal
+      await fetchAssignments();
+      closeEditDue();
+    } catch (err: any) {
+      setEditError(err?.message || String(err));
+    } finally {
+      setEditLoading(false);
+    }
+  }
+  // --- end new helpers ---
+
   useEffect(() => {
     // when location.search contains ?view=..., reflect that in the UI
     const params = new URLSearchParams(location.search);
@@ -368,7 +469,19 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
     const dd = String(d.getDate()).padStart(2, '0');
     return `${yy}-${mm}-${dd}`;
   };
-  
+
+  // helper: check if assignment due_date is in the past
+  function isPastDue(a: AssignmentWithCourse | null | undefined) {
+    try {
+      if (!a || !a.due_date) return false;
+      const due = new Date(a.due_date).getTime();
+      if (!Number.isFinite(due)) return false;
+      return due < Date.now();
+    } catch {
+      return false;
+    }
+  }
+
   const assignmentsByDate = useMemo(() => {
     const map = new Map<string, AssignmentWithCourse[]>();
     groupedAssignments.forEach((g) => {
@@ -567,6 +680,10 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                                 <div className="flex flex-col items-end gap-2">
                                   <div className={`px-3 py-1 text-xs rounded-full border ${statusColor(a.status)}`}>{a.status}</div>
                                   <div className="text-xs text-slate-400">{a.points} pts</div>
+                                  {/* Show overdue marker for instructor view */}
+                                  {isPastDue(a) && a.status !== 'submitted' && a.status !== 'graded' && (
+                                    <div className="mt-1 text-xs text-red-600 font-medium">Deadline passed</div>
+                                  )}
                                 </div>
                               </div>
 
@@ -579,7 +696,17 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                                   {a.completed_items ? <CheckCircle size={14} className="text-green-500" /> : <XCircle size={14} className="text-red-400" />}
                                   <span>{a.completed_items ?? 0} items</span>
                                 </div>
+
                                 <button onClick={() => navigate(`/courses/${a.course?.id}`)} className="ml-auto text-sm text-indigo-600 hover:underline">View submissions</button>
+
+                                {/* Edit due date (instructor) */}
+                                <button
+                                  onClick={() => openEditDue(a)}
+                                  className="ml-2 text-sm px-2 py-1 border rounded text-slate-700 hover:bg-slate-50"
+                                  title="Edit due date"
+                                >
+                                  Edit due
+                                </button>
                               </div>
                             </div>
                           </article>
@@ -679,6 +806,31 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
               </aside>
             </div>
           </>
+        )}
+
+        {/* Edit due modal */}
+        {editModalOpen && editingAssignment && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/40" onClick={closeEditDue} />
+            <div className="relative bg-white rounded-lg p-6 z-50 w-full max-w-md">
+              <h3 className="text-lg mb-2">Edit due date</h3>
+              <div className="text-sm text-slate-600 mb-3">{editingAssignment.title}</div>
+              <label className="block text-xs text-slate-600 mb-2">Due date and time</label>
+              <input
+                type="datetime-local"
+                value={editDueValue}
+                onChange={(e) => setEditDueValue(e.target.value)}
+                className="w-full border px-3 py-2 rounded mb-3"
+              />
+              {editError && <div className="text-xs text-red-600 mb-2">{editError}</div>}
+              <div className="flex justify-end gap-2">
+                <button onClick={closeEditDue} className="px-3 py-1 border rounded">Cancel</button>
+                <button onClick={submitEditDue} disabled={editLoading} className={`px-3 py-1 rounded ${editLoading ? 'bg-indigo-300 text-white' : 'bg-indigo-600 text-white'}`}>
+                  {editLoading ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

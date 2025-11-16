@@ -325,6 +325,13 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
 
   // initiate and handle file selection
   function handleInitiateUpload(id: string | number, courseId?: string | number) {
+    // Prevent uploads after deadline (client-side guard)
+    const assignment = groupedAssignments.flatMap(g => g.assignments).find(x => String(x.id) === String(id));
+    if (isPastDue(assignment)) {
+      showPopup('The submission deadline has passed. Late submissions are not allowed.', 'error', 'Deadline passed');
+      return;
+    }
+
     setUploadError(null);
     setPendingUploadFor(id);
     setPendingUploadCourseId(courseId ?? null);
@@ -517,6 +524,19 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
     </div>
   );
 
+  // helper: check if an assignment due_date is in the past (returns true when due_date < now)
+  function isPastDue(a: AssignmentWithCourse | null | undefined) {
+    try {
+      if (!a || !a.due_date) return false;
+      const due = new Date(a.due_date).getTime();
+      // if due is invalid date, treat as not past due
+      if (!Number.isFinite(due)) return false;
+      return due < Date.now();
+    } catch {
+      return false;
+    }
+  }
+
   return (
     <div className="min-h-screen p-6 bg-gradient-to-b from-gray-50 to-white">
       <div className="max-w-7xl mx-auto">
@@ -548,7 +568,7 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
               <span className={`relative z-10 block w-6 h-6 bg-white rounded-full shadow transform transition-transform duration-300 ${theme === 'dark' ? 'translate-x-6 rotate-6' : 'translate-x-0 rotate-0'}`} />
             </button>
 
-            <button onLogout={onLogout} className="px-4 py-2 bg-red-600 text-white rounded">Logout</button>
+            <button onClick={onLogout} className="px-4 py-2 bg-red-600 text-white rounded">Logout</button>
             <button onClick={() => setMenuOpen(v => !v)} className="h-10 w-10 bg-white rounded flex items-center justify-center"><MoreVertical size={18} /></button>
             {menuOpen && (
               <div ref={menuRef} className="absolute right-0 mt-2 w-40 bg-white rounded shadow z-50">
@@ -634,7 +654,15 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
                                 ? `${a.submission.grade} / ${a.points ?? 10} pts`
                                 : `${a.points ?? 10} pts`}
                             </div>
-                            {a.status !== 'graded' && <button onClick={() => handleInitiateUpload(a.id, a.course?.id)} className="mt-2 px-2 py-1 bg-indigo-600 text-white text-xs rounded">Submit</button>}
+
+                            {/* New: don't show submit button when past due; show message instead */}
+                            {isPastDue(a) ? (
+                              <div className="mt-2 text-xs text-red-600 font-medium">Deadline passed</div>
+                            ) : (
+                              a.status !== 'graded' && (
+                                <button onClick={() => handleInitiateUpload(a.id, a.course?.id)} className="mt-2 px-2 py-1 bg-indigo-600 text-white text-xs rounded">Submit</button>
+                              )
+                            )}
                           </div>
                         </div>
                       ))}
