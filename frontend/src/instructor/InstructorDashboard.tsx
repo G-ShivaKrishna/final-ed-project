@@ -1031,7 +1031,8 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-50 p-6">
+    // make top-level container and most text theme-aware so dark mode is consistent
+    <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-50 dark:from-slate-900 dark:to-slate-900 p-6 text-slate-800 dark:text-slate-100">
       <div className="max-w-7xl mx-auto">
         <header className="flex items-center justify-between mb-6">
           <div className="flex flex-col justify-center">
@@ -1087,36 +1088,39 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
               <h3 className="text-sm text-slate-600 font-medium mb-3">Recent posts</h3>
               <div className="flex flex-col sm:flex-row gap-3 items-stretch">
                 {recentPosts.map((p) => (
-                  <div key={p.id} className="bg-white rounded-lg p-3 shadow-sm flex-1 min-w-0">
+                  // card: use dark background + dark:border for consistent contrast
+                  <div key={p.id} className="bg-white dark:bg-slate-800 rounded-lg p-3 shadow-sm dark:shadow-none flex-1 min-w-0 border border-slate-200 dark:border-slate-700">
                     <div className="flex items-start justify-between">
                       <div>
-                        <div className="text-sm font-semibold text-slate-800 truncate">{p.title}</div>
-                        <div className="text-xs text-slate-500 mt-1">{p.course?.code} • {formatDate(p.due_date)}</div>
+                        <div className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">{p.title}</div>
+                        <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{p.course?.code} • {formatDate(p.due_date)}</div>
                       </div>
-                      <div className={`text-xs px-2 py-1 rounded-full ${statusColor(p.status)}`}>{p.status}</div>
+                      {/* status pill removed for instructor recent posts (instructor doesn't submit) */}
                     </div>
                   </div>
                 ))}
               </div>
             </div>
 
+            {/* main grid */}
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
               {/* Main column */}
               <main className="lg:col-span-3">
-                <section className="bg-white rounded-xl shadow-sm p-5 mb-6">
+                {/* ready-to-grade card */}
+                <section className="bg-white dark:bg-slate-800 rounded-xl shadow-sm dark:shadow-none p-5 mb-6 border border-slate-200 dark:border-slate-700">
                   <div className="flex items-center justify-between">
                     <h3 className="text-lg font-semibold text-slate-700">Ready to grade (past 7 days)</h3>
                     <span className="text-xs text-slate-500">{readyToGradeAssignments.length} assignment{readyToGradeAssignments.length > 1 ? 's' : ''}</span>
                   </div>
                   {readyToGradeAssignments.length === 0 ? (
-                    <div className="mt-4 text-sm text-slate-500">No assignments are ready to grade yet.</div>
+                    <div className="mt-4 text-sm text-slate-500 dark:text-slate-400">No assignments are ready to grade yet.</div>
                   ) : (
                     <div className="mt-4 space-y-3">
                       {readyToGradeAssignments.map((a) => (
-                        <article key={`ready-${a.id}`} className="border border-slate-200 rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <article key={`ready-${a.id}`} className="border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white dark:bg-slate-800">
                           <div>
-                            <div className="text-sm font-semibold text-slate-800">{a.title}</div>
-                            <div className="text-xs text-slate-500 mt-1">{a.course?.code ?? '—'} • due {new Date(a.due_date).toLocaleString()}</div>
+                            <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">{a.title}</div>
+                            <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{a.course?.code ?? '—'} • due {new Date(a.due_date).toLocaleString()}</div>
                           </div>
                           <button
                             onClick={() => navigateToSubmissions(a)}
@@ -1132,19 +1136,19 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
 
                 <div className="space-y-6">
                   {groupedAssignments.map((group) => (
-                    <section key={group.date} className="bg-white rounded-xl shadow-sm p-5">
+                    <section key={group.date} className="bg-white dark:bg-slate-800 rounded-xl shadow-sm dark:shadow-none p-5 border border-slate-200 dark:border-slate-700">
                       <h3 className="text-sm text-slate-500 font-medium mb-4">{group.date}</h3>
 
                       <div className="space-y-3">
                         {group.assignments.map((a) => (
-                          <article key={a.id} className="flex items-center gap-4 p-4 rounded-lg border border-transparent hover:border-slate-200 transition bg-gradient-to-b from-white to-white/95">
+                          <article key={a.id} className="flex items-center gap-4 p-4 rounded-lg border border-transparent hover:border-slate-200 dark:hover:border-slate-600 transition bg-white dark:bg-slate-800">
                             <div className={`${a.course?.color === 'purple' ? 'bg-violet-500' : a.course?.color === 'blue' ? 'bg-blue-500' : a.course?.color === 'gray' ? 'bg-gray-400' : 'bg-slate-400'} w-2 h-12 rounded-l-md`} />
 
                             <div className="flex-1">
                               <div className="flex items-start justify-between gap-4">
                                 <div>
-                                  <div className="text-sm font-semibold text-slate-800">{a.title}</div>
-                                  <div className="text-xs text-slate-500 mt-1">{a.course?.code} • {formatDate(a.due_date)}</div>
+                                  <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">{a.title}</div>
+                                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{a.course?.code} • {formatDate(a.due_date)}</div>
                                 </div>
 
                                 <div className="flex flex-col items-end gap-2">
@@ -1158,11 +1162,11 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                               <div className="mt-3 flex items-center gap-3 text-sm text-slate-500">
                                 <div className="flex items-center gap-1">
                                   <Clock size={14} />
-                                  <span>{new Date(a.due_date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                  <span className="dark:text-slate-300">{new Date(a.due_date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                                 </div>
                                 <div className="flex items-center gap-1">
                                   {a.completed_items ? <CheckCircle size={14} className="text-green-500" /> : <XCircle size={14} className="text-red-400" />}
-                                  <span>{a.completed_items ?? 0} items</span>
+                                  <span className="dark:text-slate-300">{a.completed_items ?? 0} items</span>
                                 </div>
 
                                 <button onClick={() => goToCourse(a.course)} className="ml-auto text-sm text-indigo-600 hover:underline">View submissions</button>
@@ -1297,46 +1301,47 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
         )}
 
         {/* Edit due modal */}
-        {editModalOpen && editingAssignment && (
+         {editModalOpen && editingAssignment && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
             <div className="absolute inset-0 bg-black/40" onClick={closeEditDue} />
-            <div className="relative bg-white rounded-lg p-6 z-50 w-full max-w-md">
-              <h3 className="text-lg mb-2">Edit due date</h3>
-              <div className="text-sm text-slate-600 mb-3">{editingAssignment.title}</div>
-              <label className="block text-xs text-slate-600 mb-2">Due date and time</label>
-              <input
-                type="datetime-local"
-                value={editDueValue}
-                onChange={(e) => setEditDueValue(e.target.value)}
-                className="w-full border px-3 py-2 rounded mb-3"
-              />
+            {/* modal: ensure dark bg and readable text */}
+            <div className="relative bg-white dark:bg-slate-800 rounded-lg p-6 z-50 w-full max-w-md border border-slate-200 dark:border-slate-700">
+               <h3 className="text-lg mb-2">Edit due date</h3>
+-              <div className="text-sm text-slate-600 mb-3">{editingAssignment.title}</div>
++              <div className="text-sm text-slate-600 dark:text-slate-400 mb-3">{editingAssignment.title}</div>
+               <label className="block text-xs text-slate-600 mb-2">Due date and time</label>
+               <input
+                 type="datetime-local"
+                 value={editDueValue}
+                 onChange={(e) => setEditDueValue(e.target.value)}
+                 className="w-full border px-3 py-2 rounded mb-3"
+               />
 
-              {/* NEW: file upload for assignment/syllabus */}
-              <label className="block text-xs text-slate-600 mb-2">Attach file (PDF)</label>
-              <div className="flex items-center gap-2 mb-2">
-                <input type="file" accept="application/pdf" onChange={handleEditFileChange} className="block" />
-                {editFileUploading && <div className="text-xs text-slate-500">Uploading…</div>}
-              </div>
-              {editFileError && <div className="text-xs text-red-600 mb-2">{editFileError}</div>}
-              <textarea
-                readOnly
-                value={editFileUrl}
-                placeholder="Uploaded file URL will appear here"
-                className="w-full border px-3 py-2 rounded mb-3 resize-y"
-                rows={3}
-              />
+               {/* NEW: file upload for assignment/syllabus */}
+               <label className="block text-xs text-slate-600 mb-2">Attach file (PDF)</label>
+               <div className="flex items-center gap-2 mb-2">
+                 <input type="file" accept="application/pdf" onChange={handleEditFileChange} className="block" />
+                 {editFileUploading && <div className="text-xs text-slate-500">Uploading…</div>}
+               </div>
+               {editFileError && <div className="text-xs text-red-600 mb-2">{editFileError}</div>}
+               <textarea
+                 readOnly
+                 value={editFileUrl}
+                 placeholder="Uploaded file URL will appear here"
+                 className="w-full border px-3 py-2 rounded mb-3 resize-y"
+                 rows={3}
+               />
 
-              {editError && <div className="text-xs text-red-600 mb-2">{editError}</div>}
-              <div className="flex justify-end gap-2">
-                <button onClick={closeEditDue} className="px-3 py-1 border rounded">Cancel</button>
-                <button onClick={submitEditDue} disabled={editLoading} className={`px-3 py-1 rounded ${editLoading ? 'bg-indigo-300 text-white' : 'bg-indigo-600 text-white'}`}>
+               {editError && <div className="text-xs text-red-600 mb-2">{editError}</div>}
+               <div className="flex justify-end gap-2">
+                 <button onClick={closeEditDue} className="px-3 py-1 border rounded">Cancel</button>
+                 <button onClick={submitEditDue} disabled={editLoading} className={`px-3 py-1 rounded ${editLoading ? 'bg-indigo-300 text-white' : 'bg-indigo-600 text-white'}`}>
                   {editLoading ? 'Saving…' : 'Save'}
                 </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+               </div>
+             </div>
+           </div>
+         )}
+       </div>
+     </div>
+  
