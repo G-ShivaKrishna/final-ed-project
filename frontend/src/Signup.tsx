@@ -1,0 +1,167 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import supabase from './supabaseClient';
+import './Login.css';
+
+export default function Signup(): JSX.Element {
+  const [form, setForm] = useState({
+    username: '',
+    email: '',
+    password: '',
+    confirmPass: '',
+    role: 'student',
+  });
+  const [error, setError] = useState<string>('');
+  const [message, setMessage] = useState<string>('');
+  const [fadeIn, setFadeIn] = useState<boolean>(false);
+  const [fadeOut, setFadeOut] = useState<boolean>(false);
+  const navigate = useNavigate();
+  const timerRef = useRef<number | null>(null);
+  const redirectDelay = 4000; // ms
+
+  useEffect(() => {
+    setFadeIn(true);
+  }, []);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setForm({ ...form, [e.target.name]: e.target.value });
+  };
+
+  const handleSignup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setMessage('');
+    setFadeOut(false);
+
+    if (!form.username || !form.email || !form.password || !form.confirmPass) {
+      setError('All fields are required.');
+      return;
+    }
+
+    if (form.password !== form.confirmPass) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email: form.email,
+      password: form.password,
+      options: {
+        emailRedirectTo: window.location.origin + '/login',
+      },
+    });
+
+    if (signUpError) {
+      setError(signUpError.message);
+      return;
+    }
+
+    const userId = (data as any)?.user?.id;
+
+    if (userId) {
+      // create user record via backend so server can control DB writes
+      const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://127.0.0.1:8000/';
+      try {
+        const resp = await fetch(`${API_BASE}users/create-user/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: userId, email: form.email, username: form.username, role: form.role }),
+        });
+
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          setError(err?.error || 'Failed to create user record');
+          return;
+        }
+      } catch (e: any) {
+        setError(e?.message || 'Network error creating user record');
+        return;
+      }
+    } else {
+      // eslint-disable-next-line no-console
+      console.warn('signUp returned no user id (email confirmation may be required) — skipping DB insert for now.');
+    }
+
+    setMessage(
+      'Signup successful! Please check your email and click the verification link before logging in. Redirecting to login...'
+    );
+
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      navigate('/login');
+    }, redirectDelay);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, []);
+
+  return (
+    <div className={`auth-wrapper ${fadeIn ? 'fade-in' : ''} ${fadeOut ? 'fade-out' : ''}`}>
+      <div className="auth-card">
+        <h2 className="auth-title">Create an account</h2>
+
+        {error && <p className="auth-message error">{error}</p>}
+        {message && (
+          <>
+            <p className="auth-message success">{message}</p>
+            <div className="auth-actions">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  if (timerRef.current) {
+                    clearTimeout(timerRef.current);
+                    timerRef.current = null;
+                  }
+                  navigate('/login');
+                }}
+              >
+                Go to login now
+              </button>
+            </div>
+          </>
+        )}
+
+        <form onSubmit={handleSignup} className="auth-form" noValidate>
+          <div className="form-group">
+            <label htmlFor="username">Username</label>
+            <input id="username" type="text" name="username" placeholder="Username" value={form.username} onChange={handleChange} className="auth-input" required />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="email">Email</label>
+            <input id="email" type="email" name="email" placeholder="Email" value={form.email} onChange={handleChange} className="auth-input" required />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="password">Password</label>
+            <input id="password" type="password" name="password" placeholder="Password" value={form.password} onChange={handleChange} className="auth-input" required />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="confirmPass">Confirm Password</label>
+            <input id="confirmPass" type="password" name="confirmPass" placeholder="Confirm Password" value={form.confirmPass} onChange={handleChange} className="auth-input" required />
+          </div>
+
+          <div className="radio-group" role="radiogroup" aria-label="Select role">
+            <label className="radio-label" htmlFor="role-student">
+              <input id="role-student" type="radio" name="role" value="student" checked={form.role === 'student'} onChange={handleChange} required /> Student
+            </label>
+
+            <label className="radio-label" htmlFor="role-instructor">
+              <input id="role-instructor" type="radio" name="role" value="instructor" checked={form.role === 'instructor'} onChange={handleChange} /> Instructor
+            </label>
+          </div>
+
+          <button type="submit" className="btn btn-primary">Create account</button>
+        </form>
+      </div>
+    </div>
+  );
+}

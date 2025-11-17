@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Responsive AI Chat</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #f1f5f9;
+    margin: 0;
+    padding: 0;
+  }
+  #chat-container {
+    position: fixed;
+    bottom: 1rem;
+    right: 1rem;
+    width: 90%;
+    max-width: 22rem;
+    max-height: 70vh;
+    background: white;
+    border-radius: 15px;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    z-index: 50;
+  }
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem;
+  }
+  #input-container {
+    display: flex;
+    border-top: 1px solid #e2e8f0;
+  }
+  #input {
+    flex: 1;
+    padding: 0.75rem;
+    border: none;
+    outline: none;
+  }
+  #send-btn {
+    padding: 0.75rem 1rem;
+    background-color: #2563eb;
+    color: white;
+    border: none;
+    cursor: pointer;
+  }
+  .chat-item img {
+    width: 36px;
+    height: 36px;
+    border-radius: 9999px;
+  }
+</style>
+</head>
+<body>
+
+<!-- Floating Button -->
+<button id="toggle-btn" class="fixed bottom-5 right-5 w-14 h-14 rounded-full bg-blue-600 text-white font-bold z-50">AI</button>
+
+<!-- Chat Box -->
+<div id="chat-container" class="hidden flex flex-col">
+  <ul id="messages" class="space-y-3"></ul>
+  <div id="input-container">
+    <input type="text" id="input" placeholder="Ask me anything...">
+    <button id="send-btn">Send</button>
+  </div>
+</div>
+
+<script>
+const toggleBtn = document.getElementById('toggle-btn');
+const chatContainer = document.getElementById('chat-container');
+const messagesEl = document.getElementById('messages');
+const inputEl = document.getElementById('input');
+const sendBtn = document.getElementById('send-btn');
+
+toggleBtn.addEventListener('click', () => {
+  chatContainer.classList.toggle('hidden');
+});
+
+// Function to append chat bubble
+function addMessage(sender, text, status='Sent') {
+  const li = document.createElement('li');
+  li.className = sender === 'user' 
+    ? 'flex ms-auto gap-x-2 sm:gap-x-4' 
+    : 'max-w-lg flex gap-x-2 sm:gap-x-4 chat-item';
+  
+  li.innerHTML = sender === 'user'
+    ? `<div class="grow text-end space-y-2">
+         <div class="inline-block bg-blue-600 rounded-2xl p-3 sm:p-4 shadow-2xs max-w-full break-words">
+           <p class="text-sm text-white">${text}</p>
+         </div>
+         <span class="mt-1 text-xs text-gray-500">${status}</span>
+       </div>
+       <!-- User Avatar Placeholder -->
+       <span class="shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-full bg-gray-600 text-white font-medium"><img class="inline-block w-9 h-9 rounded-full" src="https://videos.openai.com/az/vg-assets/assets%2Ftask_01k86ecpjqf4hsm2wb0t5wpke1%2F1761153082_img_0.webp?se=2025-10-28T17%3A11%3A24Z&sp=r&sv=2024-08-04&sr=b&skoid=8ffff87a-01f1-47c9-9090-32999d4d6380&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2025-10-22T17%3A00%3A14Z&ske=2025-10-29T17%3A05%3A14Z&sks=b&skv=2024-08-04&sig=zGveNTWhdq0vdXZZuArJ6TqJsCk8aAaeO80v72G4BOQ%3D&ac=oaivgprodscus" alt="User Avatar">
+</span>`
+    : `<!-- AI Avatar Placeholder -->
+       <img class="inline-block w-9 h-9 rounded-full" src="https://videos.openai.com/az/vg-assets/assets%2Ftask_01k86e1pkzep7r2ace8nnr6s2d%2F1761152717_img_0.webp?se=2025-10-28T17%3A05%3A21Z&sp=r&sv=2024-08-04&sr=b&skoid=8ffff87a-01f1-47c9-9090-32999d4d6380&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2025-10-22T16%3A55%3A26Z&ske=2025-10-29T17%3A00%3A26Z&sks=b&skv=2024-08-04&sig=v31FbArIIfmd9pfMutgCQ5xKp9sp/xqoqtYzlu8Hqmo%3D&ac=oaivgprodscus" alt="AI Avatar">
+       <div>
+         <div class="bg-white border border-gray-200 rounded-2xl p-3 sm:p-4 max-w-full break-words">
+           <p class="text-sm text-gray-800">${text}</p>
+         </div>
+         <span class="mt-1 text-xs text-gray-500">${status}</span>
+       </div>`;
+
+  messagesEl.appendChild(li);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+// Send message
+async function sendMessage() {
+  const text = inputEl.value.trim();
+  if (!text) return;
+  addMessage('user', text);
+  inputEl.value = '';
+
+  // AI typing indicator
+  addMessage('ai', 'AI is typing...', '');
+
+  try {
+    const response = await fetch('http://localhost:3000/api/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: text })
+    });
+    const data = await response.json();
+
+    // Replace last AI typing message
+// Replace last AI typing message
+const lastAI = messagesEl.querySelector('li:last-child');
+lastAI.innerHTML = `
+  <img class="inline-block w-9 h-9 rounded-full" 
+       src="https://videos.openai.com/az/vg-assets/assets%2Ftask_01k86e1pkzep7r2ace8nnr6s2d%2F1761152717_img_0.webp?se=2025-10-28T17%3A05%3A21Z&sp=r&sv=2024-08-04&sr=b&skoid=8ffff87a-01f1-47c9-9090-32999d4d6380&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2025-10-22T16%3A55%3A26Z&ske=2025-10-29T17%3A00%3A26Z&sks=b&skv=2024-08-04&sig=v31FbArIIfmd9pfMutgCQ5xKp9sp/xqoqtYzlu8Hqmo%3D&ac=oaivgprodscus" 
+       alt="AI Avatar">
+  <div>
+    <div class="bg-white border border-gray-200 rounded-2xl p-3 sm:p-4 max-w-full break-words">
+      <p class="text-sm text-gray-800">${data.answer}</p>
+    </div>
+    <span class="mt-1 text-xs text-gray-500">Sent</span>
+  </div>
+`;
+
+  } catch (err) {
+    const lastAI = messagesEl.querySelector('li:last-child');
+    lastAI.innerHTML = `<p class="text-red-500">AI is unavailable.</p>`;
+    console.error(err);
+  }
+}
+
+sendBtn.addEventListener('click', sendMessage);
+inputEl.addEventListener('keydown', e => { if(e.key==='Enter') sendMessage(); });
+</script>
+
+</body>
+</html>

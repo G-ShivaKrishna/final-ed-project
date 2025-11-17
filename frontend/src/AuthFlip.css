@@ -1,0 +1,58 @@
+:root {
+  --primary-bg: linear-gradient(135deg, #0f172a, #1e293b);
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: var(--primary-bg);
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.auth-scene {
+  width: 400px;
+  height: 650px;
+  perspective: 1500px;
+}
+
+.auth-card {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.8s cubic-bezier(0.68, -0.55, 0.27, 1.55);
+}
+
+.auth-card.flip {
+  transform: rotateY(180deg);
+}
+
+.auth-front,
+.auth-back {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+}
+
+.auth-back {
+  transform: rotateY(180deg);
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: #60a5fa;
+  font-weight: 500;
+  cursor: pointer;
+  margin-left: 0.3rem;
+  text-decoration: underline;
+}
+
+.link-btn:hover {
+  color: #1d4ed8;
+}
