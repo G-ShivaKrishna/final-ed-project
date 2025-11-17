@@ -250,7 +250,6 @@ export default function CourseDetail(): JSX.Element {
         const ans = quizAnswers[i];
         if (ans >= 0 && q.correctIndex !== undefined && ans === q.correctIndex) correct++;
       }
-      setQuizScore(correct);
       const { data: sessionData } = await supabase.auth.getSession();
       const studentId = sessionData?.session?.user?.id;
       const payload = { quiz_id: activeQuiz.id, student_id: studentId, answers: quizAnswers, score: correct };
@@ -258,15 +257,19 @@ export default function CourseDetail(): JSX.Element {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
       const j = await res.json().catch(()=>{});
-      if (!res.ok) setQuizError(j?.error || `Submit failed: ${res.status}`);
-      else {
-        // FIX: use lowercase true, include total_points fallback
+      if (!res.ok) {
+        setQuizError(j?.error || `Submit failed: ${res.status}`);
+      } else {
         setQuizzes(prev =>
           prev.map(q => q.id === activeQuiz.id
             ? { ...q, has_submitted: true, student_submission: { score: correct } }
             : q
           )
         );
+        // CLOSE quiz view and return to list
+        setActiveQuiz(null);
+        setQuizAnswers([]);
+        setQuizScore(null);
       }
     } catch (e:any) {
       setQuizError(e?.message || 'Submit failed');
