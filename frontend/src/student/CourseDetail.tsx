@@ -99,6 +99,7 @@ export default function CourseDetail(): JSX.Element {
   const [syllabusState, setSyllabusState] = React.useState<Material[]>([]);
   const [assignmentsState, setAssignmentsState] = React.useState<Assignment[]>([]);
   const [quizzes, setQuizzes] = React.useState<Quiz[]>([]);
+  const [studentId, setStudentId] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState<boolean>(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -151,6 +152,7 @@ export default function CourseDetail(): JSX.Element {
       try {
         const { data: sessionData } = await supabase.auth.getSession();
         const userId = sessionData?.session?.user?.id ?? '';
+        setStudentId(userId || null);
 
         if (tab === 'syllabus') {
           const res = await fetch(`${API_BASE}/users/courses/resources/?course_db_id=${encodeURIComponent(String(idParam))}&user_id=${encodeURIComponent(userId)}`);
@@ -167,7 +169,7 @@ export default function CourseDetail(): JSX.Element {
             if (!cancelled) setAssignmentsState(normalized);
           } else if (!cancelled) setAssignmentsState([]);
         } else if (tab === 'quizzes') {
-          const res = await fetch(`${API_BASE}/users/courses/quizzes/?course_db_id=${encodeURIComponent(String(idParam))}`);
+          const res = await fetch(`${API_BASE}/users/courses/quizzes/?course_db_id=${encodeURIComponent(String(idParam))}${studentId ? `&student_id=${encodeURIComponent(studentId)}` : ''}`);
           const json = await res.json().catch(()=>[]);
           if (res.ok) {
             const list = Array.isArray(json) ? json : (json.quizzes ?? []);
@@ -181,7 +183,8 @@ export default function CourseDetail(): JSX.Element {
                 } catch { questions = []; }
               }
               if (!Array.isArray(questions)) questions = [];
-              return { ...q, questions };
+             const total = Array.isArray(questions) ? questions.length : 0;
+              return { ...q, questions, total_points: total };
             });
             setQuizzes(normalized);
           } else if (!cancelled) setQuizzes([]);
@@ -193,7 +196,7 @@ export default function CourseDetail(): JSX.Element {
       }
     })();
     return () => { cancelled = true; };
-  }, [idParam, tab]);
+  }, [idParam, tab, studentId]);
 
   // Quiz handlers
   async function openQuiz(quizId: string) {
@@ -202,7 +205,7 @@ export default function CourseDetail(): JSX.Element {
     setActiveQuiz(null);
     setQuizAnswers([]);
     try {
-      const res = await fetch(`${API_BASE}/users/courses/quizzes/${encodeURIComponent(quizId)}/`);
+     const res = await fetch(`${API_BASE}/users/courses/quizzes/${encodeURIComponent(quizId)}/?${studentId ? `student_id=${encodeURIComponent(studentId)}` : ''}`);
       const j = await res.json().catch(()=>null);
       if (!res.ok) throw new Error(j?.error || `Failed to load quiz`);
       const q = j.quiz ?? j;
@@ -214,6 +217,12 @@ export default function CourseDetail(): JSX.Element {
         } catch { questions = []; }
       }
       if (!Array.isArray(questions)) questions = [];
+      // prevent opening if already submitted: show summary only
+      if (q.has_submitted) {
+        setActiveQuiz({ id: q.id, title: q.title, questions: [], });
+        setQuizScore(q.student_submission?.score ?? null);
+        return;
+      }
       setActiveQuiz({ id: q.id, title: q.title, questions });
       setQuizAnswers(Array(questions.length).fill(-1));
     } catch (e:any) {
@@ -231,6 +240,7 @@ export default function CourseDetail(): JSX.Element {
 
   async function submitQuizAttempt() {
     if (!activeQuiz) return;
+    if (quizScore !== null) return;
     setQuizSubmitting(true);
     setQuizError(null);
     try {
@@ -249,6 +259,15 @@ export default function CourseDetail(): JSX.Element {
       });
       const j = await res.json().catch(()=>{});
       if (!res.ok) setQuizError(j?.error || `Submit failed: ${res.status}`);
+      else {
+        // FIX: use lowercase true, include total_points fallback
+        setQuizzes(prev =>
+          prev.map(q => q.id === activeQuiz.id
+            ? { ...q, has_submitted: true, student_submission: { score: correct } }
+            : q
+          )
+        );
+      }
     } catch (e:any) {
       setQuizError(e?.message || 'Submit failed');
     } finally {
@@ -319,7 +338,7 @@ export default function CourseDetail(): JSX.Element {
         const studentId = sessionData?.session?.user?.id;
         if (!studentId) throw new Error('Not authenticated');
         const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
-        const courseDbId = uploadCourseId ?? idParam;
+        const courseDbId = idParam; // removed uploadCourseId
 
         const publicUrl = await uploadSubmissionFile(file, courseDbId ?? 'public', idFor, studentId);
         if (!publicUrl) throw new Error('Upload failed');
@@ -554,9 +573,20 @@ export default function CourseDetail(): JSX.Element {
                   <li key={q.id} className="p-3 border rounded flex items-center justify-between">
                     <div>
                       <div className="font-medium">{q.title}</div>
-                      <div className="text-xs text-slate-500">{Array.isArray(q.questions) ? `${q.questions.length} question(s)` : '0 questions'}</div>
+                      <div className="text-xs text-slate-500">
+                        {(Array.isArray(q.questions) ? `${q.questions.length}` : '0') + ' question(s)'}
+                        {q.has_submitted && q.student_submission?.score != null ? (
+                          <span className="ml-2 font-semibold text-green-600">
+                            {q.student_submission.score} / {q.total_points ?? (Array.isArray(q.questions)? q.questions.length:0)} pts
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
-                    <button onClick={() => openQuiz(q.id)} className="px-3 py-1 bg-indigo-600 text-white rounded text-sm">Open quiz</button>
+                   {q.has_submitted ? (
+                     <span className="px-3 py-1 rounded text-xs bg-green-50 text-green-700 border border-green-200">Completed</span>
+                   ) : (
+                     <button onClick={() => openQuiz(q.id)} className="px-3 py-1 bg-indigo-600 text-white rounded text-sm">Open quiz</button>
+                   )}
                   </li>
                 ))}
               </ul>

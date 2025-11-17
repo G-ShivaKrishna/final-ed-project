@@ -4,7 +4,7 @@ from core.supabase_client import supabase
 import json
 import logging
 import requests
-from django.http import JsonResponse, HttpResponseBadRequest, HttpResponse
+from django.http import JsonResponse, HttpResponseBadRequest, HttpResponse, HttpResponseNotAllowed
 from django.views.decorators.csrf import csrf_exempt
 from datetime import datetime
 import random
@@ -1220,35 +1220,64 @@ def create_quiz(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 def list_quizzes(request):
-    # optional ?course_db_id=...
+    # optional ?course_db_id=... & optional ?student_id=...
     try:
         course_db_id = request.GET.get('course_db_id')
+        student_id = request.GET.get('student_id')
         with connection.cursor() as cur:
             if course_db_id:
-                cur.execute("SELECT id, course_db_id, title, questions, created_by, created_at FROM quizzes WHERE course_db_id = %s ORDER BY created_at DESC", [str(course_db_id)])
+                cur.execute(
+                    "SELECT id, course_db_id, title, questions, created_by, created_at FROM quizzes WHERE course_db_id = %s ORDER BY created_at DESC",
+                    [str(course_db_id)]
+                )
             else:
-                cur.execute("SELECT id, course_db_id, title, questions, created_by, created_at FROM quizzes ORDER BY created_at DESC")
+                cur.execute(
+                    "SELECT id, course_db_id, title, questions, created_by, created_at FROM quizzes ORDER BY created_at DESC"
+                )
             rows = cur.fetchall()
             cols = [col[0] for col in cur.description]
         quizzes = []
         for r in rows:
             q = dict(zip(cols, r))
             q['id'] = str(q['id'])
-            # NEW: parse questions JSON if stored as text
             if isinstance(q.get('questions'), str):
                 try:
                     parsed = json.loads(q['questions'])
-                    if isinstance(parsed, list):
-                        q['questions'] = parsed
+                    q['questions'] = parsed if isinstance(parsed, list) else []
                 except:
                     q['questions'] = []
+            if isinstance(q.get('questions'), list):
+                q['total_points'] = len(q['questions'])
+            else:
+                q['total_points'] = 0
             quizzes.append(q)
+        # annotate submissions (avoid ANY(...) 500)
+        if student_id and quizzes:
+            quiz_ids = [q['id'] for q in quizzes]
+            with connection.cursor() as cur:
+                placeholders = ",".join(["%s"] * len(quiz_ids))
+                cur.execute(
+                    f"SELECT quiz_id, score, submitted_at FROM quiz_submissions WHERE student_id = %s AND quiz_id IN ({placeholders})",
+                    [str(student_id), *quiz_ids]
+                )
+                sub_rows = cur.fetchall()
+            subs_map = {}
+            for quiz_id, score, submitted_at in sub_rows:
+                subs_map[str(quiz_id)] = {'score': score, 'submitted_at': submitted_at.isoformat()}
+            for q in quizzes:
+                if q['id'] in subs_map:
+                    q['has_submitted'] = True
+                    q['student_submission'] = subs_map[q['id']]
+                else:
+                    q['has_submitted'] = False
         return JsonResponse({'quizzes': quizzes})
     except Exception as e:
+        logger.exception("list_quizzes failed")
         return JsonResponse({'error': str(e)}, status=500)
 
 def get_quiz(request, quiz_id):
     try:
+        student_id = request.GET.get('student_id')
         with connection.cursor() as cur:
             cur.execute("SELECT id, course_db_id, title, questions, created_by, created_at FROM quizzes WHERE id = %s", [str(quiz_id)])
             row = cur.fetchone()
@@ -1257,16 +1286,27 @@ def get_quiz(request, quiz_id):
             cols = [col[0] for col in cur.description]
             q = dict(zip(cols, row))
             q['id'] = str(q['id'])
-            # NEW: parse questions JSON if needed
             if isinstance(q.get('questions'), str):
                 try:
                     parsed = json.loads(q['questions'])
-                    if isinstance(parsed, list):
-                        q['questions'] = parsed
+                    q['questions'] = parsed if isinstance(parsed, list) else []
                 except:
                     q['questions'] = []
+            q['total_points'] = len(q['questions']) if isinstance(q.get('questions'), list) else 0
+            if student_id:
+                cur.execute(
+                    "SELECT id, score, submitted_at FROM quiz_submissions WHERE quiz_id = %s AND student_id = %s LIMIT 1",
+                    [str(quiz_id), str(student_id)]
+                )
+                sub = cur.fetchone()
+                if sub:
+                    q['has_submitted'] = True
+                    q['student_submission'] = {'id': str(sub[0]), 'score': sub[1], 'submitted_at': sub[2].isoformat()}
+                else:
+                    q['has_submitted'] = False
         return JsonResponse({'quiz': q})
     except Exception as e:
+        logger.exception("get_quiz failed")
         return JsonResponse({'error': str(e)}, status=500)
 
 @csrf_exempt
@@ -1277,10 +1317,19 @@ def submit_quiz(request):
         payload = json.loads(request.body or b'{}')
         quiz_id = payload.get('quiz_id')
         student_id = payload.get('student_id')
-        answers = payload.get('answers')  # expected array of chosen option indexes
-        score = payload.get('score')  # integer
+        answers = payload.get('answers')
+        score = payload.get('score')
         if not quiz_id or student_id is None or answers is None or score is None:
             return JsonResponse({'error': 'quiz_id, student_id, answers and score required'}, status=400)
+        # prevent duplicate submissions
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM quiz_submissions WHERE quiz_id = %s AND student_id = %s LIMIT 1",
+                [str(quiz_id), str(student_id)]
+            )
+            existing = cur.fetchone()
+            if existing:
+                return JsonResponse({'error': 'already_submitted'}, status=409)
         with connection.cursor() as cur:
             cur.execute(
                 "INSERT INTO quiz_submissions (quiz_id, student_id, answers, score, submitted_at) VALUES (%s, %s, %s, %s, %s) RETURNING id, submitted_at",
@@ -1363,8 +1412,9 @@ def get_course_detail(request):
         if not course_db_id:
             return JsonResponse({'error': 'course_db_id required'}, status=400)
         with connection.cursor() as cur:
+            # DROP description column (avoid 500 if schema lacks it)
             cur.execute(
-                "SELECT id, name, course_id, description, instructor_id, created_at FROM courses WHERE id = %s",
+                "SELECT id, name, course_id, instructor_id, created_at FROM courses WHERE id = %s",
                 [str(course_db_id)]
             )
             row = cur.fetchone()
@@ -1375,4 +1425,5 @@ def get_course_detail(request):
             obj['id'] = str(obj.get('id')) if obj.get('id') is not None else None
         return JsonResponse({'course': obj})
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        logger.exception("get_course_detail failed")
+        return JsonResponse({'error': 'internal', 'details': str(e)}, status=500)
