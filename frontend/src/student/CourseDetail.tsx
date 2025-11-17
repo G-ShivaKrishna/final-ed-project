@@ -2,9 +2,9 @@ import React from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { ChevronLeft } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-const API_BASE = (import.meta as any).env?.VITE_API_URL || window.location.origin;
+const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
 
-// Resolve a resource link into an absolute URL safe to open in a new tab.
+// URL helpers (retain)
 function resolveHref(raw?: string | null) : string | null {
   if (!raw) return null;
   const s = String(raw).trim();
@@ -56,64 +56,18 @@ function extractUrlFromTextOrResource(rawText?: string | null, resource?: any): 
   return null;
 }
 
-type Material = { id: string; title: string; uploadedAt: string; link?: string; description?: string; type?: string };
-type Assignment = { id: string; title: string; due_date: string; status: string; points?: number; description?: string; postedAt?: string; submitted_file?: string };
-
-const SAMPLE_COURSES: { id: string; code: string; title: string }[] = [
-  { id: 'c1', code: '4-1 FAM', title: 'Foundations of Applied Math' },
-  { id: 'c2', code: 'MATH101', title: 'Calculus I' },
-  { id: 'c3', code: 'ENG202', title: 'English Composition' },
-  { id: 'c4', code: 'CS105', title: 'Intro to Programming' },
-];
-
-const SAMPLE_SYLLABUS: Record<string, Material[]> = {
-  c1: [
-    { id: 's1', title: 'Course Syllabus (PDF)', uploadedAt: '2025-08-01', link: '#', type: 'pdf', description: 'Full course syllabus with grading policy and schedule.' },
-    { id: 's2', title: 'Lecture 1 — Mathematical Foundations', uploadedAt: '2025-08-05', link: '#', type: 'notes', description: 'Overview of sets, relations, and functions.' },
-    { id: 's6', title: 'Reading: Introduction to Applied Math', uploadedAt: '2025-08-07', link: '#', type: 'reading', description: 'Chapter 1 from the course textbook.' },
-  ],
-  c2: [
-    { id: 's3', title: 'Syllabus & Schedule', uploadedAt: '2025-07-30', link: '#', type: 'pdf', description: 'Topics, office hours and assessment calendar.' },
-    { id: 's7', title: 'Problem Set Examples', uploadedAt: '2025-08-06', link: '#', type: 'examples', description: 'Worked examples for limits and continuity.' },
-  ],
-  c3: [
-    { id: 's4', title: 'Course Reader', uploadedAt: '2025-08-02', link: '#', type: 'reader', description: 'Collection of short readings and essays for discussion.' },
-    { id: 's8', title: 'Essay Guidelines', uploadedAt: '2025-08-10', link: '#', type: 'doc', description: 'Formatting and rubric for essays.' },
-  ],
-  c4: [
-    { id: 's5', title: 'Programming Labs', uploadedAt: '2025-08-03', link: '#', type: 'lab', description: 'Lab instructions and starter code for first assignments.' },
-    { id: 's9', title: 'Setup Instructions', uploadedAt: '2025-08-04', link: '#', type: 'guide', description: 'How to set up your dev environment.' },
-  ],
-};
-
-const SAMPLE_ASSIGNMENTS: Record<string, Assignment[]> = {
-  c1: [
-    { id: 'a1', title: 'Homework 1: Sets & Functions', due_date: '2025-09-01', status: 'submitted', points: 10, description: 'Problems 1–5 from chapter 1.', postedAt: '2025-08-25' },
-    { id: 'a2', title: 'Project Proposal', due_date: '2025-09-15', status: 'missing', points: 20, description: 'One-page proposal describing your term project idea.', postedAt: '2025-08-28' },
-    { id: 'a6', title: 'Quiz 1', due_date: '2025-09-05', status: 'graded', points: 5, description: 'In-class quiz covering lectures 1–3.', postedAt: '2025-09-01' },
-  ],
-  c2: [
-    { id: 'a3', title: 'Limits Worksheet', due_date: '2025-09-05', status: 'graded', points: 15, description: 'Limit evaluation problems.', postedAt: '2025-08-29' },
-    { id: 'a7', title: 'Derivative Exercises', due_date: '2025-09-12', status: 'submitted', points: 20, description: 'Problems on differentiation rules.', postedAt: '2025-09-03' },
-  ],
-  c3: [
-    { id: 'a4', title: 'Essay Draft', due_date: '2025-09-10', status: 'submitted', points: 20, description: 'First draft of essay (1000–1200 words).', postedAt: '2025-08-31' },
-    { id: 'a8', title: 'Reading Response 1', due_date: '2025-09-07', status: 'graded', points: 5, description: 'Short response to assigned reading.', postedAt: '2025-09-02' },
-  ],
-  c4: [
-    { id: 'a5', title: 'Lab 1: Hello World', due_date: '2025-09-03', status: 'submitted', points: 5, description: 'Basic programming exercises.', postedAt: '2025-08-30' },
-  ],
-};
+type Material = { id: string; title: string; uploadedAt?: string; link?: string; description?: string; type?: string; created_at?: string };
+type Assignment = { id: string; title: string; due_date: string; status: string; points?: number; description?: string; submitted_file?: string; submission?: any };
+type Quiz = { id: string; title: string; questions?: any[] };
 
 export default function CourseDetail(): JSX.Element {
   const params = useParams();
   const idParam = (params as any).id ?? (params as any).courseId ?? (params as any).course_db_id ?? null;
   const navigate = useNavigate();
   const location = useLocation();
-  // prefer course passed from the course list via navigation state
-  const stateCourseRaw = (location.state as any)?.course ?? (location.state as any)?.courseItem ?? null;
+  const navCourse = (location.state as any)?.course ?? null;
 
-  // helper: create a readable name from an id-like string (fallback when backend/title not available)
+  // Normalize incoming course
   function prettifyId(raw?: string | null) {
     if (!raw) return 'Course';
     try {
@@ -126,8 +80,6 @@ export default function CourseDetail(): JSX.Element {
       return String(raw);
     }
   }
-
-  // normalize many possible backend course shapes into { id, code, title }
   function normalizeCourseObject(obj: any, fallbackId?: string | null) {
     if (!obj || typeof obj !== 'object') return { id: fallbackId ?? String(fallbackId ?? ''), code: '', title: prettifyId(fallbackId) };
     const title = obj.title || obj.name || obj.course_name || obj.display_name || obj.courseTitle || obj.courseTitleString || obj.label || obj.full_name;
@@ -137,43 +89,162 @@ export default function CourseDetail(): JSX.Element {
     return { id: String(id), code: String(code || ''), title: String(title || code || prettifyId(fallbackId)) };
   }
 
-  // try to find a matching sample course by id, code or title (case-insensitive)
-  function findSampleCourseMatch(raw?: string | null) {
-    if (!raw) return null;
-    const key = String(raw).trim().toLowerCase();
-    return SAMPLE_COURSES.find((c) => {
-      if (!c) return false;
-      return [c.id, c.code, c.title].some((v) => String(v ?? '').trim().toLowerCase() === key);
-    }) ?? null;
-  }
-
-  // keep course metadata in state so we can update it from API responses
-  const stateCourse = stateCourseRaw ? normalizeCourseObject(stateCourseRaw, idParam) : null;
-  const sampleMatch = stateCourse ?? findSampleCourseMatch(idParam);
-  const initialCourse = sampleMatch ?? normalizeCourseObject(null, idParam);
+  const initialCourse = normalizeCourseObject(navCourse, idParam);
   const [course, setCourse] = React.useState(initialCourse);
-  // ensure course state updates when idParam changes (page reload with different id)
-  React.useEffect(() => {
-    // prefer navigation state first (if user came from the list), then SAMPLE match, then prettified id
-    const match = stateCourse ?? findSampleCourseMatch(idParam);
-    setCourse(match ?? normalizeCourseObject(null, idParam));
-  }, [idParam]);
-  const [tab, setTab] = React.useState<'syllabus' | 'assignments'>('syllabus');
 
-  // UI state: prefer backend data but fall back to SAMPLE fixtures
-  const [syllabusState, setSyllabusState] = React.useState<Material[]>(SAMPLE_SYLLABUS[idParam as string] ?? []);
-  const [assignmentsState, setAssignmentsState] = React.useState<Assignment[]>(SAMPLE_ASSIGNMENTS[idParam as string] ?? []);
-  const [loading, setLoading] = React.useState<boolean>(!!idParam);
+  // tabs: syllabus, assignments, quizzes
+  const [tab, setTab] = React.useState<'syllabus' | 'assignments' | 'quizzes'>('syllabus');
+
+  // dynamic state (no static SAMPLE data)
+  const [syllabusState, setSyllabusState] = React.useState<Material[]>([]);
+  const [assignmentsState, setAssignmentsState] = React.useState<Assignment[]>([]);
+  const [quizzes, setQuizzes] = React.useState<Quiz[]>([]);
+  const [loading, setLoading] = React.useState<boolean>(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  // file upload refs/state for submitting assignments (PDF only)
+  // quiz interaction state
+  const [activeQuiz, setActiveQuiz] = React.useState<Quiz | null>(null);
+  const [quizAnswers, setQuizAnswers] = React.useState<number[]>([]);
+  const [quizSubmitting, setQuizSubmitting] = React.useState(false);
+  const [quizScore, setQuizScore] = React.useState<number | null>(null);
+  const [quizError, setQuizError] = React.useState<string | null>(null);
+
+  // submission upload
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [pendingUploadFor, setPendingUploadFor] = React.useState<string | number | null>(null);
-  const [uploadCourseId, setUploadCourseId] = React.useState<string | number | null>(idParam);
   const [uploadError, setUploadError] = React.useState<string | null>(null);
   const [uploading, setUploading] = React.useState(false);
 
-  // helper: try getPublicUrl then fall back to a signed URL for private buckets
+  // Fetch course meta once
+  React.useEffect(() => {
+    if (!idParam) return;
+    (async () => {
+      try {
+        const urls = [
+          `${API_BASE}/users/courses/detail/?course_db_id=${encodeURIComponent(String(idParam))}`,
+          `${API_BASE}/users/courses/?course_db_id=${encodeURIComponent(String(idParam))}`,
+        ];
+        for (const u of urls) {
+          try {
+            const r = await fetch(u);
+            if (!r.ok) continue;
+            const j = await r.json().catch(()=>null);
+            if (!j) continue;
+            const candidate = j.course ?? j.data?.course ?? j.data ?? j;
+            if (candidate && typeof candidate === 'object') {
+              setCourse(normalizeCourseObject(candidate, idParam));
+              break;
+            }
+          } catch {}
+        }
+      } catch {}
+    })();
+  }, [idParam]);
+
+  // Fetch data per-tab
+  React.useEffect(() => {
+    if (!idParam) return;
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const userId = sessionData?.session?.user?.id ?? '';
+
+        if (tab === 'syllabus') {
+          const res = await fetch(`${API_BASE}/users/courses/resources/?course_db_id=${encodeURIComponent(String(idParam))}&user_id=${encodeURIComponent(userId)}`);
+          const json = await res.json().catch(()=>[]);
+          if (!cancelled) setSyllabusState(res.ok && Array.isArray(json) ? json : []);
+        } else if (tab === 'assignments') {
+          const res = await fetch(`${API_BASE}/users/courses/assignments/?course_db_id=${encodeURIComponent(String(idParam))}&user_id=${encodeURIComponent(userId)}`);
+          const json = await res.json().catch(()=>[]);
+          if (res.ok && Array.isArray(json)) {
+            const normalized = json.map(a => {
+              if (a.due_date) { try { a.due_date = new Date(a.due_date).toISOString(); } catch {} }
+              return a;
+            });
+            if (!cancelled) setAssignmentsState(normalized);
+          } else if (!cancelled) setAssignmentsState([]);
+        } else if (tab === 'quizzes') {
+          const res = await fetch(`${API_BASE}/users/courses/quizzes/?course_db_id=${encodeURIComponent(String(idParam))}`);
+          const json = await res.json().catch(()=>[]);
+          if (res.ok) {
+            const list = Array.isArray(json) ? json : (json.quizzes ?? []);
+            if (!cancelled) setQuizzes(list);
+          } else if (!cancelled) setQuizzes([]);
+        }
+      } catch (e:any) {
+        if (!cancelled) setError(e?.message || 'Failed to load');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [idParam, tab]);
+
+  // Quiz handlers
+  async function openQuiz(quizId: string) {
+    setQuizError(null);
+    setQuizScore(null);
+    setActiveQuiz(null);
+    setQuizAnswers([]);
+    try {
+      const res = await fetch(`${API_BASE}/users/courses/quizzes/${encodeURIComponent(quizId)}/`);
+      const j = await res.json().catch(()=>null);
+      if (!res.ok) throw new Error(j?.error || `Failed to load quiz`);
+      const q = j.quiz ?? j;
+      const questions = Array.isArray(q.questions) ? q.questions : [];
+      setActiveQuiz({ id: q.id, title: q.title, questions });
+      setQuizAnswers(Array(questions.length).fill(-1));
+    } catch (e:any) {
+      setQuizError(e?.message || 'Quiz load failed');
+    }
+  }
+
+  function pickQuizAnswer(idx: number, opt: number) {
+    setQuizAnswers(prev => {
+      const copy = [...prev];
+      copy[idx] = opt;
+      return copy;
+    });
+  }
+
+  async function submitQuizAttempt() {
+    if (!activeQuiz) return;
+    setQuizSubmitting(true);
+    setQuizError(null);
+    try {
+      let correct = 0;
+      for (let i = 0; i < activeQuiz.questions!.length; i++) {
+        const q = activeQuiz.questions![i];
+        const ans = quizAnswers[i];
+        if (ans >= 0 && q.correctIndex !== undefined && ans === q.correctIndex) correct++;
+      }
+      setQuizScore(correct);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const studentId = sessionData?.session?.user?.id;
+      const payload = { quiz_id: activeQuiz.id, student_id: studentId, answers: quizAnswers, score: correct };
+      const res = await fetch(`${API_BASE}/users/courses/quizzes/submit/`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      const j = await res.json().catch(()=>{});
+      if (!res.ok) setQuizError(j?.error || `Submit failed: ${res.status}`);
+    } catch (e:any) {
+      setQuizError(e?.message || 'Submit failed');
+    } finally {
+      setQuizSubmitting(false);
+    }
+  }
+
+  function closeActiveQuiz() {
+    setActiveQuiz(null);
+    setQuizAnswers([]);
+    setQuizScore(null);
+    setQuizError(null);
+  }
+
+  // Upload helpers
   async function getPublicUrlOrSigned(bucket: string, path: string) {
     try {
       const pubRes = await supabase.storage.from(bucket).getPublicUrl(path);
@@ -188,8 +259,6 @@ export default function CourseDetail(): JSX.Element {
     }
     return '';
   }
-
-  // helper: upload file to 'submissions' bucket and return a usable URL (public or signed)
   async function uploadSubmissionFile(file: File, courseId: string | number, assignmentId: string | number, studentId: string) {
     if (!file) return '';
     try {
@@ -203,115 +272,9 @@ export default function CourseDetail(): JSX.Element {
       return '';
     }
   }
-
-  // fetch course metadata early so header shows correct name (independent of current tab)
-  React.useEffect(() => {
-    let mounted = true;
-    async function fetchCourseMeta() {
-      if (!idParam) return;
-      try {
-        const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
-        // try a dedicated metadata endpoint; fallback to assignments/resources shapes
-        const urls = [
-          `${API_BASE}/users/courses/detail/?course_db_id=${encodeURIComponent(String(idParam))}`,
-          `${API_BASE}/users/courses/?course_db_id=${encodeURIComponent(String(idParam))}`,
-        ];
-        for (const url of urls) {
-          try {
-            const res = await fetch(url);
-            if (!res.ok) continue;
-            const j = await res.json().catch(() => null);
-            if (!j) continue;
-            // try common locations for a course object
-            const candidate = j.course ?? j.data?.course ?? j.data ?? j;
-            if (candidate && typeof candidate === 'object') {
-              const normalized = normalizeCourseObject(candidate, idParam);
-              if (mounted) setCourse((prev) => ({ ...prev, ...normalized }));
-              return;
-            }
-          } catch { /* try next url */ }
-        }
-      } catch (_) { /* ignore metadata fetch errors */ }
-    }
-    fetchCourseMeta();
-    return () => { mounted = false; };
-  }, [idParam]);
-
-  // fetch only the data relevant to the active tab (so reload/fetch is per-tab)
-  React.useEffect(() => {
-    let mounted = true;
-    async function fetchCourseData() {
-      if (!idParam) return;
-      setLoading(true);
-      setError(null);
-      try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const userId = sessionData?.session?.user?.id;
-        const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
-
-        if (tab === 'syllabus') {
-          try {
-            const rres = await fetch(`${API_BASE}/users/courses/resources/?course_db_id=${encodeURIComponent(String(idParam))}&user_id=${encodeURIComponent(String(userId ?? ''))}`);
-            const rjson = await rres.json().catch(() => []);
-            if (rres.ok && mounted) {
-              const payload = Array.isArray(rjson) ? rjson : (rjson?.data ?? []);
-              setSyllabusState(payload);
-              // merge course metadata if present (accept multiple shapes)
-              const courseSource = (Array.isArray(rjson) ? rjson : rjson)?.course ?? rjson?.course ?? (payload && (payload.course || payload[0]?.course));
-              if (courseSource) {
-                const normalized = normalizeCourseObject(courseSource, idParam);
-                setCourse((prev) => ({ ...prev, ...normalized }));
-              } else if (rjson && typeof rjson === 'object' && (rjson.title || rjson.name || rjson.course_name)) {
-                setCourse((prev) => ({ ...prev, ...normalizeCourseObject(rjson, idParam) }));
-              }
-            }
-          } catch (_e) {
-            // keep sample on error
-          }
-        } else if (tab === 'assignments') {
-          try {
-            const ares = await fetch(`${API_BASE}/users/courses/assignments/?course_db_id=${encodeURIComponent(String(idParam))}&user_id=${encodeURIComponent(String(userId ?? ''))}`);
-            const ajson = await ares.json().catch(() => []);
-            if (ares.ok && mounted) {
-              const normalized = (Array.isArray(ajson) ? ajson : (ajson?.data ?? [])).map((a: any) => {
-                // ensure due_date is ISO for consistent display
-                if (a.due_date) {
-                  try { a.due_date = new Date(a.due_date).toISOString(); } catch (_) {}
-                }
-                // normalize nested course object on each assignment if present
-                if (a.course && typeof a.course === 'object') {
-                  a.course = { ...a.course, ...(normalizeCourseObject(a.course, idParam)) };
-                }
-                return a;
-              });
-              if (normalized.length) {
-                setAssignmentsState(normalized);
-                // if first assignment contains course metadata, use it to update header
-                const firstCourse = normalized[0]?.course || ajson?.course || ajson?.data?.course;
-                if (firstCourse) {
-                  setCourse((prev) => ({ ...prev, ...normalizeCourseObject(firstCourse, idParam) }));
-                }
-              }
-            }
-          } catch (_e) {
-            // keep sample on error
-          }
-        }
-      } catch (err: any) {
-        if (mounted) setError('Failed to load course data');
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    }
-    fetchCourseData();
-    return () => { mounted = false; };
-    // re-run when idParam or active tab changes
-  }, [idParam, tab]);
-
   function markAsSubmitted(id: string | number, filename?: string) {
-    setAssignmentsState((prev) => prev.map((m) => (m.id === id ? { ...m, status: m.status === 'graded' ? m.status : 'submitted', submitted_file: filename ?? m.submitted_file } : m)));
+    setAssignmentsState(prev => prev.map(a => a.id === id ? { ...a, status: a.status === 'graded' ? a.status : 'submitted', submitted_file: filename ?? a.submitted_file } : a));
   }
-
   function handleFileChange(e: any) {
     const file = e.target.files?.[0];
     const idFor = pendingUploadFor;
@@ -400,148 +363,188 @@ export default function CourseDetail(): JSX.Element {
           <div className="flex items-center gap-2 border-b pb-3 mb-4">
             <button onClick={() => setTab('syllabus')} className={`px-3 py-2 rounded-md ${tab === 'syllabus' ? 'bg-indigo-600 text-white' : 'text-slate-700'}`}>Syllabus</button>
             <button onClick={() => setTab('assignments')} className={`px-3 py-2 rounded-md ${tab === 'assignments' ? 'bg-indigo-600 text-white' : 'text-slate-700'}`}>Assignments</button>
+            <button onClick={() => setTab('quizzes')} className={`px-3 py-2 rounded-md ${tab === 'quizzes' ? 'bg-indigo-600 text-white' : 'text-slate-700'}`}>Quizzes</button>
           </div>
 
-          {tab === 'syllabus' ? (
-            <div>
-              {loading ? (
-                <div className="text-sm text-slate-500">Loading…</div>
-              ) : !syllabusState || syllabusState.length === 0 ? (
-                <div className="text-sm text-slate-500">No syllabus materials posted yet.</div>
-              ) : (
-                <ul className="space-y-3">
-                  {syllabusState.map((m) => (
-                    <li key={m.id} className="p-3 border rounded flex items-center justify-between">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <div className="font-medium">{m.title}</div>
-                          {m.type && <span className="text-xs text-slate-500 px-2 py-1 rounded bg-slate-100">{m.type}</span>}
-                        </div>
-                        {m.description && (
-                          <div className="text-sm text-slate-600 mt-1">
-                            {(() => {
-                              // use robust extractor which also checks for "Attachment:" and resource fields
-                              const url = extractUrlFromTextOrResource(m.description, m);
-                              if (url) {
-                                // show the descriptive text before the URL if present
-                                const before = String(m.description ?? '').split(url)[0];
-                                return (
-                                  <>
-                                    {before && <span>{before}</span>}
-                                    <div>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); window.open(url, '_blank', 'noopener'); }}
-                                        className="text-indigo-600 underline"
-                                      >
-                                        Download attachment
-                                      </button>
-                                    </div>
-                                  </>
-                                );
-                              }
-                              return <span>{m.description}</span>;
-                            })()}
-                          </div>
-                        )}
-                        <div className="text-xs text-slate-500 mt-2">Uploaded {m.uploadedAt ?? m.created_at ?? ''}</div>
+          {error && <div className="text-sm text-red-600 mb-3">{error}</div>}
+
+          {tab === 'syllabus' && (
+            loading ? <div className="text-sm text-slate-500">Loading…</div> :
+            syllabusState.length === 0 ? <div className="text-sm text-slate-500">No materials posted.</div> :
+            <ul className="space-y-3">
+              {syllabusState.map(m => (
+                <li key={m.id} className="p-3 border rounded flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <div className="font-medium">{m.title}</div>
+                      {m.type && <span className="text-xs text-slate-500 px-2 py-1 rounded bg-slate-100">{m.type}</span>}
+                    </div>
+                    {m.description && (
+                      <div className="text-sm text-slate-600 mt-1">
+                        {(() => {
+                          const url = extractUrlFromTextOrResource(m.description, m);
+                          if (url) {
+                            const before = String(m.description).split(url)[0];
+                            return (
+                              <>
+                                {before && <span>{before}</span>}
+                                <div>
+                                  <button type="button" onClick={() => window.open(url, '_blank','noopener')} className="text-indigo-600 underline">
+                                    Download attachment
+                                  </button>
+                                </div>
+                              </>
+                            );
+                          }
+                          return <span>{m.description}</span>;
+                        })()}
                       </div>
-                      {(() => {
-                        // prefer explicit fields, then content text; robustly extract a real URL
-                        const href = extractUrlFromTextOrResource(m.link ?? m.video_url ?? null, m) ?? extractUrlFromTextOrResource(m.description, m);
-                        if (!href) {
-                          return <span className="text-indigo-600 cursor-default">View</span>;
-                        }
-                        return (
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); window.open(href, '_blank', 'noopener'); }}
-                            className="text-indigo-600 underline"
-                            aria-label={`Open ${m.title ?? 'resource'}`}
-                          >
-                            View
-                          </button>
-                        );
-                      })()}
-                    </li>
+                    )}
+                    <div className="text-xs text-slate-500 mt-2">Uploaded {m.uploadedAt ?? m.created_at ?? ''}</div>
+                  </div>
+                  {(() => {
+                    const href = extractUrlFromTextOrResource(m.link ?? m.video_url ?? null, m) ?? extractUrlFromTextOrResource(m.description, m);
+                    if (!href) return <span className="text-indigo-600 cursor-default">View</span>;
+                    return <button type="button" onClick={() => window.open(href,'_blank','noopener')} className="text-indigo-600 underline">View</button>;
+                  })()}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {tab === 'assignments' && (
+            loading ? <div className="text-sm text-slate-500">Loading…</div> :
+            assignmentsState.length === 0 ? <div className="text-sm text-slate-500">No assignments posted.</div> :
+            <ul className="space-y-3">
+              {assignmentsState.map(a => (
+                <li key={a.id} className="p-3 border rounded">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-medium">{a.title}</div>
+                      {a.description && (
+                        <div className="text-sm text-slate-600 mt-1">
+                          {(() => {
+                            const url = extractUrlFromTextOrResource(a.description, a);
+                            if (url) {
+                              const before = String(a.description).split(url)[0];
+                              return (
+                                <>
+                                  {before && <span>{before}</span>}
+                                  <div>
+                                    <button type="button" onClick={() => window.open(url,'_blank','noopener')} className="text-indigo-600 underline">
+                                      Download attachment
+                                    </button>
+                                  </div>
+                                </>
+                              );
+                            }
+                            return <span>{a.description}</span>;
+                          })()}
+                        </div>
+                      )}
+                      {a.submission?.file_url && (
+                        <div className="text-xs text-slate-600 mt-1">
+                          <a href={a.submission.file_url} target="_blank" rel="noreferrer" className="text-indigo-600">Download your submission</a>
+                        </div>
+                      )}
+                      <div className="text-xs text-slate-500 mt-2">Due {a.due_date ? new Date(a.due_date).toLocaleDateString() : 'No due date'}</div>
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {a.submission?.grade !== undefined && a.submission?.grade !== null
+                        ? `${a.submission.grade} / ${a.points ?? 10} pts`
+                        : `${a.points ?? 10} pts`}
+                    </div>
+                  </div>
+                  <div className="mt-2 text-xs text-slate-600">Status: {a.status}{a.submitted_file ? ` — ${a.submitted_file}` : ''}</div>
+                  <div className="mt-2">
+                    {a.status === 'graded' ? (
+                      <span className="text-xs px-2 py-1 border rounded text-slate-500">Graded</span>
+                    ) : a.status === 'submitted' ? (
+                      <span className="text-xs px-2 py-1 border rounded text-slate-700">Submitted</span>
+                    ) : (
+                      (uploading && pendingUploadFor === a.id) ? (
+                        <button className="text-xs px-2 py-1 border rounded bg-indigo-400 text-white opacity-80" disabled>Uploading...</button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setUploadError(null);
+                            setPendingUploadFor(a.id);
+                            setTimeout(() => fileInputRef.current?.click(), 50);
+                          }}
+                          className="text-xs px-2 py-1 border rounded bg-indigo-600 text-white"
+                        >
+                          Submit
+                        </button>
+                      )
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {tab === 'quizzes' && (
+            loading ? <div className="text-sm text-slate-500">Loading…</div> :
+            activeQuiz ? (
+              <div>
+                <div className="flex items-start justify-between mb-4">
+                  <h3 className="text-lg font-semibold">{activeQuiz.title}</h3>
+                  <button onClick={closeActiveQuiz} className="px-2 py-1 border rounded text-sm">Close</button>
+                </div>
+                <div className="space-y-4 max-h-[55vh] overflow-auto">
+                  {activeQuiz.questions?.map((q: any, qi: number) => (
+                    <div key={qi} className="border rounded p-3">
+                      <div className="font-medium mb-2">{qi + 1}. {q.text}</div>
+                      <div className="space-y-2">
+                        {Array.isArray(q.options) ? q.options.map((opt: string, oi: number) => (
+                          <label key={oi} className="flex items-center gap-2 text-sm">
+                            <input
+                              type="radio"
+                              name={`quiz-q-${qi}`}
+                              checked={quizAnswers[qi] === oi}
+                              onChange={() => pickQuizAnswer(qi, oi)}
+                            />
+                            <span>{opt}</span>
+                          </label>
+                        )) : <div className="text-xs text-slate-500">No options</div>}
+                      </div>
+                    </div>
                   ))}
-                </ul>
-              )}
-            </div>
-          ) : (
-            <div>
-              {loading ? (
-                <div className="text-sm text-slate-500">Loading…</div>
-              ) : assignmentsState.length === 0 ? (
-                <div className="text-sm text-slate-500">No assignments posted yet.</div>
-              ) : (
-                <ul className="space-y-3">
-                  {assignmentsState.map((a) => (
-                    <li key={a.id} className="p-3 border rounded">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="font-medium">{a.title}</div>
-                          {a.description && (
-                            <div className="text-sm text-slate-600 mt-1">
-                              {(() => {
-                                const url = extractUrlFromTextOrResource(a.description, a);
-                                if (url) {
-                                  const before = String(a.description ?? '').split(url)[0];
-                                  return (
-                                    <>
-                                      {before && <span>{before}</span>}
-                                      <div>
-                                        <button type="button" onClick={(e) => { e.stopPropagation(); window.open(url, '_blank', 'noopener'); }} className="text-indigo-600 underline">
-                                          Download attachment
-                                        </button>
-                                      </div>
-                                    </>
-                                  );
-                                }
-                                return <span>{a.description}</span>;
-                              })()}
-                            </div>
-                          )}
-                          {/* if backend returned submission object with file_url, render download link */}
-                          {a.submission?.file_url && (
-                            <div className="text-xs text-slate-600 mt-1"><a href={a.submission.file_url} target="_blank" rel="noreferrer" className="text-indigo-600">Download your submission</a></div>
-                          )}
-                          <div className="text-xs text-slate-500 mt-2">Due {a.due_date ? new Date(a.due_date).toLocaleDateString() : 'No due date'}</div>
-                          {a.postedAt && <div className="text-xs text-slate-400">Posted {a.postedAt}</div>}
-                        </div>
-                        {/* Show earned grade / max points when available, otherwise show assignment max points.
-                            Default max to 10 when instructor didn't provide points. */}
-                        <div className="text-xs text-slate-500">
-                          {a.submission?.grade !== undefined && a.submission?.grade !== null
-                            ? `${a.submission.grade} / ${a.points ?? 10} pts`
-                            : `${a.points ?? 10} pts`}
-                        </div>
-                      </div>
-                      <div className="mt-2 text-xs text-slate-600">Status: {a.status}{a.submitted_file ? ` — ${a.submitted_file}` : ''}</div>
-                      <div className="mt-2">
-                        {a.status === 'graded' ? (
-                          <span className="text-xs px-2 py-1 border rounded text-slate-500">Graded</span>
-                        ) : a.status === 'submitted' ? (
-                          <span className="text-xs px-2 py-1 border rounded text-slate-700">Submitted</span>
-                        ) : (
-                          (uploading && pendingUploadFor === a.id) ? (
-                            <button className="text-xs px-2 py-1 border rounded bg-indigo-400 text-white opacity-80" disabled>Uploading...</button>
-                          ) : (
-                            <button onClick={() => {
-                              setUploadError(null);
-                              setPendingUploadFor(a.id);
-                              setTimeout(() => fileInputRef.current?.click(), 50);
-                            }} className="text-xs px-2 py-1 border rounded bg-indigo-600 text-white">Submit</button>
-                          )
-                        )}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+                </div>
+                {quizScore !== null && (
+                  <div className="mt-4 text-sm text-green-700">
+                    You scored {quizScore} / {activeQuiz.questions?.length ?? 0}
+                  </div>
+                )}
+                {quizError && <div className="mt-2 text-sm text-red-600">{quizError}</div>}
+                <div className="mt-4 flex justify-end gap-2">
+                  <button onClick={closeActiveQuiz} className="px-3 py-1 border rounded">Cancel</button>
+                  <button
+                    onClick={submitQuizAttempt}
+                    disabled={quizSubmitting}
+                    className="px-3 py-1 bg-indigo-600 text-white rounded"
+                  >
+                    {quizSubmitting ? 'Submitting…' : 'Submit quiz'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              quizzes.length === 0 ? <div className="text-sm text-slate-500">No quizzes available.</div> :
+              <ul className="space-y-3">
+                {quizzes.map(q => (
+                  <li key={q.id} className="p-3 border rounded flex items-center justify-between">
+                    <div>
+                      <div className="font-medium">{q.title}</div>
+                      <div className="text-xs text-slate-500">{q.questions ? `${q.questions.length} question(s)` : ''}</div>
+                    </div>
+                    <button onClick={() => openQuiz(q.id)} className="px-3 py-1 bg-indigo-600 text-white rounded text-sm">Open quiz</button>
+                  </li>
+                ))}
+              </ul>
+            )
           )}
         </div>
+
         {uploadError && (
           <div className="fixed top-6 right-6 z-50 bg-red-50 text-red-700 border border-red-200 px-4 py-2 rounded flex items-center gap-3">
             <div className="text-sm">{uploadError}</div>
@@ -549,7 +552,7 @@ export default function CourseDetail(): JSX.Element {
           </div>
         )}
 
-        {/* hidden file input for assignment submission (PDF only) - always present */}
+        {/* Hidden file input for assignment submission */}
         <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden" onChange={handleFileChange} />
       </div>
     </div>
