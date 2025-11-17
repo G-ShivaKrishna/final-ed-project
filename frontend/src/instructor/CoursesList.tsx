@@ -266,11 +266,32 @@ export default function CoursesList(): JSX.Element {
         });
         setQuizzes(normalized);
       } catch { setQuizzes([]); }
-      // fetch all quiz submissions for this course (with student info)
+      // fetch all quiz submissions for this course and enrich with student email/username
       try {
         const qsres = await fetch(`${API_BASE}/users/courses/quizzes/submissions/?course_db_id=${encodeURIComponent(course.id)}&include_students=1`);
         const qsjson = await qsres.json().catch(() => ({}));
         const subs = Array.isArray(qsjson.submissions) ? qsjson.submissions : [];
+
+        // NEW: look up student emails from Supabase users table
+        try {
+          const ids = Array.from(new Set(subs.map((s: any) => String(s.student_id)).filter(Boolean)));
+          if (ids.length) {
+            const { data: urows, error: uerr } = await supabase
+              .from('users')
+              .select('id, email, username')
+              .in('id', ids);
+            if (!uerr && Array.isArray(urows)) {
+              const uMap = new Map(urows.map((u: any) => [String(u.id), u]));
+              subs.forEach((s: any) => {
+                const u = uMap.get(String(s.student_id));
+                if (u) s.student = { id: u.id, email: u.email, username: u.username };
+              });
+            }
+          }
+        } catch {
+          // ignore enrichment errors; fallback to showing student_id
+        }
+
         const map = new Map<string, any[]>();
         subs.forEach((s: any) => {
           const kid = String(s.quiz_id);

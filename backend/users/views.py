@@ -1370,16 +1370,15 @@ def list_quiz_submissions(request):
         quiz_id = request.GET.get('quiz_id')
         student_id = request.GET.get('student_id')
         course_db_id = request.GET.get('course_db_id')
-        include_students = request.GET.get('include_students')
+        include_students = request.GET.get('include_students')  # ignored; DB has no users table
+
         with connection.cursor() as cur:
+            # Select only fields from quiz_submissions; no users join/columns
             base_select = "SELECT qs.id, qs.quiz_id, qs.student_id, qs.answers, qs.score, qs.submitted_at"
-            if include_students:
-                base_select += ", u.email, u.username"
             joins = " FROM quiz_submissions qs"
             if course_db_id:
                 joins += " JOIN quizzes q ON qs.quiz_id = q.id"
-            if include_students:
-                joins += " LEFT JOIN users u ON qs.student_id = u.id"
+
             where_clauses = []
             params = []
             if course_db_id:
@@ -1391,24 +1390,22 @@ def list_quiz_submissions(request):
             if student_id:
                 where_clauses.append("qs.student_id = %s")
                 params.append(str(student_id))
+
             where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
             order_sql = " ORDER BY qs.submitted_at DESC"
             sql = base_select + joins + where_sql + order_sql
+
             cur.execute(sql, params)
             rows = cur.fetchall()
             cols = [col[0] for col in cur.description] if cur.description else []
+
         subs = []
         for r in rows:
             s = dict(zip(cols, r))
             s['id'] = str(s['id'])
-            if include_students:
-                s['student'] = {
-                    'id': s.get('student_id'),
-                    'email': s.get('email'),
-                    'username': s.get('username'),
-                }
-                # remove flat email/username keys to avoid duplication
-                s.pop('email', None); s.pop('username', None)
+            # Only return student_id (no email/username); append to list
+            subs.append(s)
+
         return JsonResponse({'submissions': subs})
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
