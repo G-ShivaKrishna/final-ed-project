@@ -664,27 +664,33 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
                             )}
                           </div>
                           <div className="flex flex-col items-end gap-2">
-                            {/* Always show status + points (removed quiz-specific branching) */}
+                            {/* Status pill */}
                             <div className={`px-2 py-1 rounded-full text-xs border ${statusColor(a.status)}`}>{a.status}</div>
                             <div className="text-xs text-slate-400">
                               {a.submission?.grade !== undefined && a.submission?.grade !== null
                                 ? `${a.submission.grade} / ${a.points ?? 10} pts`
                                 : `${a.points ?? 10} pts`}
                             </div>
-
-                            {/* Submit button logic retained */}
-                            {isPastDue(a) ? (
-                              <div className="mt-2 text-xs text-red-600 font-medium">Deadline passed</div>
-                            ) : (
-                              a.status !== 'graded' && (
+                            {(() => {
+                              const submitted = a.status === 'submitted' || a.submission?.status === 'submitted';
+                              if (isPastDue(a)) {
+                                return <div className="mt-2 text-xs text-red-600 font-medium">Deadline passed</div>;
+                              }
+                              if (submitted) {
+                                return <span className="mt-2 text-xs px-2 py-1 rounded bg-blue-50 text-blue-700 border border-blue-200">Submitted</span>;
+                              }
+                              if (a.status === 'graded') {
+                                return <span className="mt-2 text-xs px-2 py-1 rounded bg-green-50 text-green-700 border border-green-200">Graded</span>;
+                              }
+                              return (
                                 <button
                                   onClick={() => handleInitiateUpload(a.id, a.course?.id)}
                                   className="mt-2 px-2 py-1 bg-indigo-600 text-white text-xs rounded"
                                 >
                                   Submit
                                 </button>
-                              )
-                            )}
+                              );
+                            })()}
                           </div>
                         </div>
                       ))}

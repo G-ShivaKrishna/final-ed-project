@@ -326,9 +326,32 @@ def dashboard_summary(request):
 				# add code property expected by frontend
 				c['code'] = c.get('course_id') or c.get('courseId') or c.get('code')
 
+		# NEW: attach this student's submission status to each assignment to prevent duplicate "Submit" buttons
+		try:
+			assignment_ids = [r.get('id') for r in assignments if r.get('id')]
+			if assignment_ids:
+				subs_resp = supabase.table('submissions') \
+					.select('id, assignment_id, status, file_url, grade, submitted_at') \
+					.in_('assignment_id', assignment_ids) \
+					.eq('student_id', user_id) \
+					.execute()
+				if not getattr(subs_resp, 'error', None):
+					subs = subs_resp.data if hasattr(subs_resp, 'data') else []
+					subs_map = { str(s.get('assignment_id')): s for s in (subs or []) }
+					for a in assignments:
+						aid = str(a.get('id'))
+						sub = subs_map.get(aid)
+						if sub:
+							a['submission'] = sub
+							# propagate submission status to assignment.status so frontend detects 'submitted'
+							if sub.get('status'):
+								a['status'] = sub.get('status')
+		except Exception:
+			# non‑fatal; leave assignments without submission info
+			logger.exception("Failed attaching student submissions in dashboard_summary")
+
 		# compute assignments_due (not graded and due in future or today)
 		from datetime import datetime, timezone
-
 		now = datetime.now(timezone.utc).isoformat()
 		assignments_due = [a for a in assignments if (a.get('status') != 'graded')]
 
