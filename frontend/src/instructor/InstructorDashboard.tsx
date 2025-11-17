@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import ChatBox from '../student/ChatBot';
 import CreateCourse from './CreateCourse';
 import CoursesList from './CoursesList';
+import InstructorQuiz from './InstructorQuiz';
 
 type AssignmentWithCourse = {
   id: string | number;
@@ -225,8 +226,10 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
     // when location changes, reflect ?view=... or default to dashboard
     const params = new URLSearchParams(location.search);
     const view = params.get('view');
-    if (view === 'courses' || view === 'create' || view === 'dashboard') {
-      setActiveView(view === 'dashboard' ? 'dashboard' : view);
+    // support additional views such as 'create-quiz'
+    const allowed = ['dashboard', 'courses', 'create', 'create-quiz'];
+    if (view && allowed.includes(view)) {
+      setActiveView(view);
     } else {
       // no or invalid view -> dashboard
       setActiveView('dashboard');
@@ -834,6 +837,9 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
       <button type="button" onClick={() => { navigate('/instructor-dashboard?view=courses'); setActiveView('courses'); }} className="text-left px-3 py-2 border rounded-md hover:shadow-md transition">My courses</button>
       <button type="button" onClick={() => { navigate('/instructor-dashboard?view=create'); setActiveView('create'); }} className="text-left px-3 py-2 border rounded-md hover:shadow-md transition">Create course</button>
       <button onClick={() => navigate('/inbox')} className="text-left px-3 py-2 border rounded-md hover:shadow-md transition">Inbox</button>
+      <button type="button" onClick={() => { navigate('/instructor-dashboard?view=create-quiz'); setActiveView('create-quiz'); }} className="text-left px-3 py-2 border rounded-md hover:shadow-md transition">
+        Create quiz
+      </button>
     </div>
   );
 
@@ -1030,6 +1036,8 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
           <CreateCourse />
         ) : activeView === 'courses' ? (
           <CoursesList />
+        ) : activeView === 'create-quiz' ? (
+          <InstructorQuiz />
         ) : (
           <>
             {/* Recent posts */}

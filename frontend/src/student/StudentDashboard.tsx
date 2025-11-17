@@ -284,6 +284,31 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
         } else setCourseAssignments([]);
       } catch { setCourseAssignments([]); }
 
+     // quizzes (append as assignment-like rows so they appear beside assignments)
+     try {
+       const qres = await fetch(`${API_BASE}/users/courses/quizzes/?course_db_id=${encodeURIComponent(String(courseDbId))}`);
+       const qjson = await qres.json().catch(() => ({}));
+       const list = Array.isArray(qjson) ? qjson : (qjson.quizzes ?? []);
+       if (Array.isArray(list) && list.length > 0) {
+         setCourseAssignments(prev => {
+           const base = Array.isArray(prev) ? prev : [];
+           const quizRows = list.map((q: any) => ({
+             id: `quiz-${q.id}`,
+             title: q.title,
+             // use created_at (or now) as a pseudo due_date for display formatting
+             due_date: q.created_at ? new Date(q.created_at).toISOString() : new Date().toISOString(),
+             status: 'quiz',
+             points: Array.isArray(q.questions) ? q.questions.length : undefined,
+             course: { id: courseDbId, code: course.code || course.course_id || course.name },
+             is_quiz: true,
+             _quiz_id: q.id,
+           }));
+           return [...base, ...quizRows];
+         });
+       }
+     } catch {
+       // ignore quiz load errors silently
+     }
       setCourseModalOpen(true);
     } catch (err) {
       console.error('loadCourseDetails error', err);
@@ -386,6 +411,127 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
       default: return 'bg-gray-50 text-gray-700 border-gray-200';
     }
   };
+
+  // --- Quizzes state & handlers (new) ---
+  const [quizzes, setQuizzes] = useState<Array<{ id: string; title: string; course_db_id?: string; questions?: any[] }>>([]);
+  const [quizzesLoading, setQuizzesLoading] = useState(false);
+  const [quizModalOpen, setQuizModalOpen] = useState(false);
+  const [selectedQuiz, setSelectedQuiz] = useState<any | null>(null);
+  const [quizAnswers, setQuizAnswers] = useState<number[]>([]);
+  const [quizSubmitting, setQuizSubmitting] = useState(false);
+  const [quizScore, setQuizScore] = useState<number | null>(null);
+  const [quizError, setQuizError] = useState<string | null>(null);
+
+  async function fetchQuizzesForEnrolledCourses() {
+    // load quizzes for each joined course (aggregates results)
+    try {
+      setQuizzesLoading(true);
+      const all: any[] = [];
+      for (const c of joinedCourses) {
+        try {
+          const res = await fetch(`${API_BASE}/users/courses/quizzes/?course_db_id=${encodeURIComponent(String(c.id))}`);
+          if (!res.ok) {
+            // skip silently for that course
+            continue;
+          }
+          const json = await res.json().catch(() => ({}));
+          // backend returns { quizzes: [...] } or array
+          const list = Array.isArray(json) ? json : (json.quizzes ?? json?.quizzes ?? []);
+          if (Array.isArray(list)) {
+            // attach course id if backend doesn't
+            list.forEach((q: any) => { if (!q.course_db_id) q.course_db_id = c.id; all.push(q); });
+          }
+        } catch (e) {
+          // ignore per-course errors
+        }
+      }
+      setQuizzes(all);
+    } catch (e) {
+      console.error('fetchQuizzesForEnrolledCourses', e);
+      setQuizzes([]);
+    } finally {
+      setQuizzesLoading(false);
+    }
+  }
+
+  // open quiz details and prepare answers buffer
+  async function openQuiz(quizId: string) {
+    setQuizError(null);
+    setQuizScore(null);
+    setSelectedQuiz(null);
+    setQuizAnswers([]);
+    setQuizModalOpen(true);
+    try {
+      const res = await fetch(`${API_BASE}/users/courses/quizzes/${encodeURIComponent(quizId)}/`);
+      if (!res.ok) throw new Error(`Failed to load quiz (${res.status})`);
+      const json = await res.json();
+      const q = json.quiz ?? json;
+      // Ensure questions array exists
+      const questions = Array.isArray(q.questions) ? q.questions : [];
+      setSelectedQuiz({ ...q, questions });
+      setQuizAnswers(Array(questions.length).fill(-1));
+    } catch (err: any) {
+      setQuizError(err?.message || String(err));
+    }
+  }
+
+  function pickQuizAnswer(qIdx: number, optIdx: number) {
+    setQuizAnswers(prev => {
+      const copy = [...prev];
+      copy[qIdx] = optIdx;
+      return copy;
+    });
+  }
+
+  async function submitQuizAttempt() {
+    if (!selectedQuiz) return;
+    setQuizSubmitting(true);
+    setQuizError(null);
+    try {
+      // compute score client-side (server-side should also validate)
+      let correct = 0;
+      for (let i = 0; i < selectedQuiz.questions.length; i++) {
+        const q = selectedQuiz.questions[i];
+        const choice = quizAnswers[i];
+        if (choice >= 0 && q.correctIndex !== undefined && choice === q.correctIndex) correct++;
+      }
+      const obtained = correct;
+      setQuizScore(obtained);
+
+      // persist submission
+      const { data: sessionData } = await supabase.auth.getSession();
+      const studentId = sessionData?.session?.user?.id ?? null;
+      const payload = {
+        quiz_id: selectedQuiz.id,
+        student_id: studentId,
+        answers: quizAnswers,
+        score: obtained,
+      };
+      const res = await fetch(`${API_BASE}/users/courses/quizzes/submit/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setQuizError(j?.error || `Submit failed: ${res.status}`);
+      } else {
+        // optionally refresh quizzes/submissions view
+        showPopup(`Quiz submitted — you scored ${obtained} / ${selectedQuiz.questions.length}`, 'success', 'Quiz submitted');
+        // refresh available quizzes if needed
+        await fetchQuizzesForEnrolledCourses();
+      }
+    } catch (err: any) {
+      setQuizError(err?.message || String(err));
+    } finally {
+      setQuizSubmitting(false);
+    }
+  }
+
+  // call fetchQuizzes after joined courses load
+  useEffect(() => {
+    if (joinedCourses && joinedCourses.length > 0) fetchQuizzesForEnrolledCourses();
+  }, [joinedCourses]);
 
   // theme state: persisted to localStorage and applied globally
   const [theme, setTheme] = useState<'light' | 'dark'>(() => (typeof window !== 'undefined' && localStorage.getItem('theme') === 'dark') ? 'dark' : 'light');
@@ -642,27 +788,58 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
                       {g.assignments.map(a => (
                         <div key={a.id} className="flex items-center justify-between p-3 border rounded">
                           <div>
-                            <div className="font-medium">{a.title}</div>
-                            <div className="text-xs text-slate-500">{a.course?.name ?? a.course?.code} • {formatDate(a.due_date)}</div>
-                            {/* show attachment link if present in description or submission */}
-                            {a.submission?.file_url && <div className="text-xs mt-1"><a href={a.submission.file_url} target="_blank" rel="noreferrer" className="text-indigo-600">Download submission</a></div>}
+                            <div className="font-medium flex items-center gap-2">
+                              {a.title}
+                             {(a as any).is_quiz && <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 border border-purple-200">Quiz</span>}
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              {a.course?.name ?? a.course?.code} • {formatDate(a.due_date)}
+                            </div>
+                            {(a as any).is_quiz && a.points != null && (
+                              <div className="text-[11px] text-slate-400 mt-1">{a.points} question{a.points === 1 ? '' : 's'}</div>
+                            )}
+                            {!((a as any).is_quiz) && a.submission?.file_url && (
+                              <div className="text-xs mt-1">
+                                <a href={a.submission.file_url} target="_blank" rel="noreferrer" className="text-indigo-600">
+                                  Download submission
+                                </a>
+                              </div>
+                            )}
                           </div>
                           <div className="flex flex-col items-end gap-2">
-                            <div className={`px-2 py-1 rounded-full text-xs border ${statusColor(a.status)}`}>{a.status}</div>
-                            <div className="text-xs text-slate-400">
-                              {a.submission?.grade !== undefined && a.submission?.grade !== null
-                                ? `${a.submission.grade} / ${a.points ?? 10} pts`
-                                : `${a.points ?? 10} pts`}
-                            </div>
-
-                            {/* New: don't show submit button when past due; show message instead */}
-                            {isPastDue(a) ? (
-                              <div className="mt-2 text-xs text-red-600 font-medium">Deadline passed</div>
-                            ) : (
-                              a.status !== 'graded' && (
-                                <button onClick={() => handleInitiateUpload(a.id, a.course?.id)} className="mt-2 px-2 py-1 bg-indigo-600 text-white text-xs rounded">Submit</button>
-                              )
+                            {!((a as any).is_quiz) && (
+                              <>
+                                <div className={`px-2 py-1 rounded-full text-xs border ${statusColor(a.status)}`}>{a.status}</div>
+                                <div className="text-xs text-slate-400">
+                                  {a.submission?.grade !== undefined && a.submission?.grade !== null
+                                    ? `${a.submission.grade} / ${a.points ?? 10} pts`
+                                    : `${a.points ?? 10} pts`}
+                                </div>
+                              </>
                             )}
+
+                           {(a as any).is_quiz ? (
+                             <button
+                               onClick={() => openQuiz((a as any)._quiz_id)}
+                               className="mt-2 px-2 py-1 bg-indigo-600 text-white text-xs rounded"
+                             >
+                               Take quiz
+                             </button>
+                           ) : (
+                              // existing assignment submit button logic
+                              isPastDue(a) ? (
+                                <div className="mt-2 text-xs text-red-600 font-medium">Deadline passed</div>
+                              ) : (
+                                a.status !== 'graded' && (
+                                  <button
+                                    onClick={() => handleInitiateUpload(a.id, a.course?.id)}
+                                    className="mt-2 px-2 py-1 bg-indigo-600 text-white text-xs rounded"
+                                  >
+                                    Submit
+                                  </button>
+                                )
+                              )
+                           )}
                           </div>
                         </div>
                       ))}
@@ -670,6 +847,34 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
                   </div>
                 ))}
               </div>
+            </section>
+
+            {/* New: Available quizzes section (beside assignments) */}
+            <section>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl">Available quizzes</h2>
+                <div className="text-sm text-slate-500">{quizzesLoading ? 'Loading…' : `${quizzes.length} quiz${quizzes.length !== 1 ? 'zes' : ''}`}</div>
+              </div>
+
+              {quizzesLoading ? (
+                <div className="text-sm text-slate-500">Loading quizzes…</div>
+              ) : quizzes.length === 0 ? (
+                <div className="text-sm text-slate-500">No quizzes available.</div>
+              ) : (
+                <div className="space-y-3">
+                  {quizzes.map((q) => (
+                    <div key={q.id} className="bg-white rounded p-3 shadow flex items-center justify-between">
+                      <div>
+                        <div className="font-medium">{q.title}</div>
+                        <div className="text-xs text-slate-500">{q.course_db_id ? `Course: ${q.course_db_id}` : ''}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => openQuiz(q.id)} className="px-3 py-1 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 transition">Take quiz</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
           </main>
 
@@ -798,6 +1003,44 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
         {/* hidden file input */}
         <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden" onChange={handleFileChange} />
 
+        {/* Quiz modal */}
+        {quizModalOpen && selectedQuiz && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/40" onClick={() => { setQuizModalOpen(false); setSelectedQuiz(null); setQuizScore(null); setQuizError(null); }} />
+            <div className="relative bg-white rounded-lg shadow-lg w-full max-w-2xl p-6 z-50 border border-slate-200">
+              <div className="flex items-start justify-between mb-4">
+                <h3 className="text-lg font-semibold">{selectedQuiz.title}</h3>
+                <button onClick={() => { setQuizModalOpen(false); setSelectedQuiz(null); setQuizScore(null); setQuizError(null); }} className="px-2 py-1 border rounded">Close</button>
+              </div>
+
+              <div className="space-y-4 max-h-[60vh] overflow-auto">
+                {selectedQuiz.questions.map((q: any, qi: number) => (
+                  <div key={qi} className="border rounded p-3">
+                    <div className="font-medium mb-2">{qi + 1}. {q.text}</div>
+                    <div className="space-y-2">
+                      {Array.isArray(q.options) ? q.options.map((opt: string, oi: number) => (
+                        <label key={oi} className="flex items-center gap-2">
+                          <input type="radio" name={`q-${qi}`} checked={quizAnswers[qi] === oi} onChange={() => pickQuizAnswer(qi, oi)} />
+                          <span>{opt}</span>
+                        </label>
+                      )) : <div className="text-xs text-slate-500">No options</div>}
+                  </div>
+                </div>
+                ))}
+              </div>
+
+              {quizScore !== null && <div className="mt-4 text-sm text-green-700">You scored {quizScore} / {selectedQuiz.questions.length}</div>}
+              {quizError && <div className="mt-2 text-sm text-red-600">{quizError}</div>}
+
+              <div className="mt-4 flex justify-end gap-2">
+                <button onClick={() => { setQuizModalOpen(false); setSelectedQuiz(null); setQuizScore(null); setQuizError(null); }} className="px-3 py-1 border rounded">Cancel</button>
+                <button onClick={submitQuizAttempt} disabled={quizSubmitting} className="px-3 py-1 bg-indigo-600 text-white rounded">
+                  {quizSubmitting ? 'Submitting…' : 'Submit quiz'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

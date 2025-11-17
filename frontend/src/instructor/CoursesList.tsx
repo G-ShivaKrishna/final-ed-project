@@ -695,6 +695,21 @@ export default function CoursesList(): JSX.Element {
                 {/* new quick-create buttons (uniform color) */}
                 <button onClick={() => setAddAssignOpen(true)} className="px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 hover:shadow-md transition">Add assignment</button>
                 <button onClick={() => { setResForm({ type: 'syllabus', title: '', content: '', video_url: '' }); setAddResOpen(true); }} className="px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 hover:shadow-md transition">Add syllabus</button>
+
+                {/* Create quiz (opens quiz builder with this course selected) */}
+                <button
+                  onClick={() => {
+                    navigate(`/instructor-dashboard?view=create-quiz&course_db_id=${encodeURIComponent(String(selectedCourse?.id))}`, {
+                      state: { course_db_id: selectedCourse?.id },
+                    });
+                  }}
+                  className="px-3 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 hover:shadow-md transition"
+                >
+                  Create quiz
+                </button>
+
+                {/* Copyable student-facing quiz list URL */}
+                <CopyStudentLinkButton courseId={selectedCourse?.id} />
               </div>
             </div>
 
@@ -1009,6 +1024,33 @@ export default function CoursesList(): JSX.Element {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Small helper component: copy student quiz URL to clipboard
+function CopyStudentLinkButton({ courseId }: { courseId?: string | number | undefined }) {
+  const [copied, setCopied] = useState(false);
+  if (!courseId) return null;
+  const url = `${window.location.origin}/student/quizzes?course_db_id=${encodeURIComponent(String(courseId))}`;
+  return (
+    <div>
+      <button
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(url);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2500);
+          } catch {
+            // fallback
+            void alert('Copy URL: ' + url);
+          }
+        }}
+        className="px-3 py-2 bg-slate-100 text-slate-800 rounded-md hover:bg-slate-200 transition"
+        title="Copy student quiz link"
+      >
+        {copied ? 'Copied' : 'Copy student link'}
+      </button>
     </div>
   );
 }
