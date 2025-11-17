@@ -1365,26 +1365,50 @@ def submit_quiz(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 def list_quiz_submissions(request):
-    # optional filters: ?quiz_id=... or ?student_id=...
+    # optional filters: ?quiz_id=... or ?student_id=... or ?course_db_id=...
     try:
         quiz_id = request.GET.get('quiz_id')
         student_id = request.GET.get('student_id')
+        course_db_id = request.GET.get('course_db_id')
+        include_students = request.GET.get('include_students')
         with connection.cursor() as cur:
-            if quiz_id and student_id:
-                cur.execute("SELECT id, quiz_id, student_id, answers, score, submitted_at FROM quiz_submissions WHERE quiz_id = %s AND student_id = %s ORDER BY submitted_at DESC", [str(quiz_id), str(student_id)])
-            elif quiz_id:
-                cur.execute("SELECT id, quiz_id, student_id, answers, score, submitted_at FROM quiz_submissions WHERE quiz_id = %s ORDER BY submitted_at DESC", [str(quiz_id)])
-            elif student_id:
-                cur.execute("SELECT id, quiz_id, student_id, answers, score, submitted_at FROM quiz_submissions WHERE student_id = %s ORDER BY submitted_at DESC", [str(student_id)])
-            else:
-                cur.execute("SELECT id, quiz_id, student_id, answers, score, submitted_at FROM quiz_submissions ORDER BY submitted_at DESC")
+            base_select = "SELECT qs.id, qs.quiz_id, qs.student_id, qs.answers, qs.score, qs.submitted_at"
+            if include_students:
+                base_select += ", u.email, u.username"
+            joins = " FROM quiz_submissions qs"
+            if course_db_id:
+                joins += " JOIN quizzes q ON qs.quiz_id = q.id"
+            if include_students:
+                joins += " LEFT JOIN users u ON qs.student_id = u.id"
+            where_clauses = []
+            params = []
+            if course_db_id:
+                where_clauses.append("q.course_db_id = %s")
+                params.append(str(course_db_id))
+            if quiz_id:
+                where_clauses.append("qs.quiz_id = %s")
+                params.append(str(quiz_id))
+            if student_id:
+                where_clauses.append("qs.student_id = %s")
+                params.append(str(student_id))
+            where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+            order_sql = " ORDER BY qs.submitted_at DESC"
+            sql = base_select + joins + where_sql + order_sql
+            cur.execute(sql, params)
             rows = cur.fetchall()
             cols = [col[0] for col in cur.description]
         subs = []
         for r in rows:
             s = dict(zip(cols, r))
             s['id'] = str(s['id'])
-            subs.append(s)
+            if include_students:
+                s['student'] = {
+                    'id': s.get('student_id'),
+                    'email': s.get('email'),
+                    'username': s.get('username'),
+                }
+                # remove flat email/username keys to avoid duplication
+                s.pop('email', None); s.pop('username', None)
         return JsonResponse({'submissions': subs})
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)

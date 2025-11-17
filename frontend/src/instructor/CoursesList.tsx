@@ -32,6 +32,7 @@ export default function CoursesList(): JSX.Element {
   const [reqLoading, setReqLoading] = useState(false);
   const [assignments, setAssignments] = useState<any[] | null>(null);
   const [resources, setResources] = useState<any[] | null>(null);
+  const [quizzes, setQuizzes] = useState<any[] | null>(null);
   const [addAssignOpen, setAddAssignOpen] = useState(false);
   const [addResOpen, setAddResOpen] = useState(false);
   // assignment edit state
@@ -188,6 +189,7 @@ export default function CoursesList(): JSX.Element {
     setStudents(null);
     setAssignments(null);
     setResources(null);
+    setQuizzes(null);
     setReqLoading(true);
     setError(null);
     try {
@@ -246,38 +248,37 @@ export default function CoursesList(): JSX.Element {
       } catch {
         setAssignments([]);
       }
-
-      // fetch course resources (syllabus/videos)
+      // fetch quizzes (base metadata)
       try {
-        const rres = await fetch(`${API_BASE}/users/courses/resources/?course_db_id=${encodeURIComponent(course.id)}&user_id=${encodeURIComponent(instructorId)}`);
-        const rjson = await rres.json().catch(() => []);
-        if (rres.ok) setResources(rjson || []);
-        else setResources([]);
-      } catch {
-        setResources([]);
-      }
-      // new: fetch all submissions for this course (instructor view)
+        const qres = await fetch(`${API_BASE}/users/courses/quizzes/?course_db_id=${encodeURIComponent(course.id)}`);
+        const qjson = await qres.json().catch(() => ({}));
+        const list = Array.isArray(qjson.quizzes) ? qjson.quizzes : [];
+        const normalized = list.map((q: any) => {
+          let questions = q.questions;
+          if (Array.isArray(questions)) {
+            return { ...q, total_points: q.total_points ?? questions.length };
+          }
+          return { ...q, total_points: q.total_points ?? 0, questions: [] };
+        });
+        setQuizzes(normalized);
+      } catch { setQuizzes([]); }
+      // fetch all quiz submissions for this course (with student info)
       try {
-        const subs = await fetchCourseSubmissions(course.id, instructorId);
-        // subs expected to be array of submissions with student info and assignment reference
-        // attach submissions to the previously-normalized assignments (use the local normalized array if available)
-        if (Array.isArray(subs) && subs.length > 0) {
-          const map = new Map<string, any[]>();
-          subs.forEach((s: any) => {
-            const aid = String(s.assignment_id);
-            if (!map.has(aid)) map.set(aid, []);
-            const arr = map.get(aid)!; // asserted non-null because we just ensured it exists
-            arr.push(s);
-          });
-          // read current assignments from state (fallback to []) then attach submissions
-          setAssignments((prev) => {
-            const base = Array.isArray(prev) ? prev : [];
-            return base.map((a: any) => ({ ...a, submissions: map.get(String(a.id)) || [] }));
-          });
-        }
-      } catch (_e) {
-        // ignore
-      }
+        const qsres = await fetch(`${API_BASE}/users/courses/quizzes/submissions/?course_db_id=${encodeURIComponent(course.id)}&include_students=1`);
+        const qsjson = await qsres.json().catch(() => ({}));
+        const subs = Array.isArray(qsjson.submissions) ? qsjson.submissions : [];
+        const map = new Map<string, any[]>();
+        subs.forEach((s: any) => {
+          const kid = String(s.quiz_id);
+          const arr = map.get(kid) || [];
+          arr.push(s);
+          map.set(kid, arr);
+        });
+        setQuizzes(prev => {
+          if (!Array.isArray(prev)) return prev;
+          return prev.map(q => ({ ...q, submissions: map.get(String(q.id)) || [] }));
+        });
+      } catch { /* ignore */ }
     } catch (err: any) {
       setRequests([]);
       setStudents([]);
@@ -796,6 +797,57 @@ export default function CoursesList(): JSX.Element {
                 </ul>
               ) : (
                 <div className="text-sm text-slate-500">No resources yet.</div>
+              )}
+            </div>
+
+            {/* Quizzes list */}
+            <div className="mb-6 bg-white dark:bg-slate-800 rounded-lg p-4 shadow-sm dark:shadow-none border border-slate-200 dark:border-slate-700">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-medium">Quizzes</h4>
+                <div className="text-xs text-slate-500">{quizzes ? `${quizzes.length} total` : '—'}</div>
+              </div>
+              {quizzes && quizzes.length > 0 ? (
+                <ul className="space-y-2">
+                  {quizzes.map((q: any) => (
+                    <li key={q.id} className="border rounded p-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-sm font-medium">{q.title}</div>
+                          <div className="text-xs text-slate-500">
+                            {q.total_points ?? 0} pts • {q.created_at ? new Date(q.created_at).toLocaleDateString() : ''}
+                          </div>
+                        </div>
+                        <div className="text-xs text-slate-400">{Array.isArray(q.questions) ? `${q.questions.length} question(s)` : '0 questions'}</div>
+                      </div>
+                      <div className="mt-3">
+                        <h5 className="text-xs text-slate-500 mb-2">Submissions</h5>
+                        {Array.isArray(q.submissions) && q.submissions.length > 0 ? (
+                          <ul className="space-y-2">
+                            {q.submissions.map((s: any) => (
+                              <li key={s.id} className="flex items-center justify-between border rounded p-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+                                <div>
+                                  <div className="text-sm font-medium dark:text-slate-100">
+                                    {s.student?.email || s.student?.username || s.student_id}
+                                  </div>
+                                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                                    {s.submitted_at ? new Date(s.submitted_at).toLocaleString() : ''}
+                                  </div>
+                                </div>
+                                <div className="text-xs text-slate-600 dark:text-slate-300 font-semibold">
+                                  Score: {s.score} / {q.total_points ?? 0}
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <div className="text-sm text-slate-500">No submissions yet.</div>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-sm text-slate-500">No quizzes yet.</div>
               )}
             </div>
 
