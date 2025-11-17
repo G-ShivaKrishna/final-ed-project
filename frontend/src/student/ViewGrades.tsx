@@ -3,10 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
+const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+
 export default function ViewGrades(): JSX.Element {
   const navigate = useNavigate();
   const [grades, setGrades] = useState<
     { id: string; course: string; assignment: string; grade: number | null; outOf: number | null; feedback?: string }[]
+  >([]);
+  const [quizGrades, setQuizGrades] = useState<
+    { id: string; quiz: string; score: number | null; outOf: number | null }[]
   >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -64,24 +69,51 @@ export default function ViewGrades(): JSX.Element {
         const assignMap = new Map(assignments.map((a: any) => [String(a.id), a]));
         const courseMap = new Map(courses.map((c: any) => [String(c.id), c]));
 
-        // compose grade rows
+        // compose grade rows (assignments)
         const rows = submissions.map((s: any) => {
           const a = assignMap.get(String(s.assignment_id)) || {};
           const course = courseMap.get(String(a.course_db_id)) || {};
           return {
             id: String(s.id),
-            // prefer human-friendly course name; fall back to course_id code
             course: course.name || course.course_id || '—',
             assignment: a.title || '—',
-            // keep raw grade/outOf so UI can format consistently
             grade: s.grade ?? null,
             outOf: a.points ?? null,
             feedback: s.feedback ?? '',
           };
         });
-
         if (mounted) {
           setGrades(rows);
+        }
+        // --- quizzes ---
+        try {
+          const qRes = await fetch(`${API_BASE}/users/courses/quizzes/submissions/?student_id=${encodeURIComponent(userId)}`);
+          const qJson = await qRes.json().catch(() => ({}));
+          const qSubs: any[] = qJson.submissions || [];
+          const quizIds = Array.from(new Set(qSubs.map(s => s.quiz_id).filter(Boolean)));
+          const detailMap: Record<string, { title: string; outOf: number }> = {};
+          await Promise.all(quizIds.map(async (qid) => {
+            try {
+              const dRes = await fetch(`${API_BASE}/users/courses/quizzes/${encodeURIComponent(String(qid))}/`);
+              const dj = await dRes.json().catch(() => ({}));
+              const qObj = dj.quiz || dj;
+              const title = qObj?.title || `Quiz ${qid}`;
+              const outOf = Array.isArray(qObj?.questions) ? qObj.questions.length : (qObj?.total_points ?? null) || null;
+              detailMap[String(qid)] = { title, outOf: outOf ?? null };
+            } catch { detailMap[String(qid)] = { title: `Quiz ${qid}`, outOf: null }; }
+          }));
+          const qRows = qSubs.map(s => {
+            const meta = detailMap[String(s.quiz_id)] || { title: `Quiz ${s.quiz_id}`, outOf: null };
+            return {
+              id: String(s.id),
+              quiz: meta.title,
+              score: s.score ?? null,
+              outOf: meta.outOf,
+            };
+          });
+          if (mounted) setQuizGrades(qRows);
+        } catch (_) {
+          if (mounted) setQuizGrades([]);
         }
       } catch (err: any) {
         console.error('Failed loading grades', err);
@@ -109,35 +141,64 @@ export default function ViewGrades(): JSX.Element {
             <div className="text-sm text-slate-500">Loading grades…</div>
           ) : error ? (
             <div className="text-sm text-red-600">Error loading grades: {error}</div>
-          ) : grades.length === 0 ? (
-            <div className="text-sm text-slate-500">No grades available yet.</div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="text-sm text-slate-500">
-                    <th className="p-3">Course</th>
-                    <th className="p-3">Assignment</th>
-                    <th className="p-3">Grade</th>
-                    <th className="p-3">Feedback</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {grades.map((g) => (
-                    <tr key={g.id} className="border-t">
-                      <td className="p-3 text-sm font-medium text-slate-700">{g.course}</td>
-                      <td className="p-3 text-sm text-slate-600">{g.assignment}</td>
-                      <td className="p-3 text-sm text-slate-700">
-                        {g.grade !== null
-                          ? `${g.grade} / ${g.outOf ?? 10}`
-                          : 'Yet to grade'}
-                      </td>
-                      <td className="p-3 text-sm text-slate-600">{g.feedback || '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              {grades.length === 0 ? (
+                <div className="text-sm text-slate-500 mb-8">No assignment grades available yet.</div>
+              ) : (
+                <div className="overflow-x-auto mb-8">
+                  <h2 className="text-lg font-semibold mb-2">Assignment Grades</h2>
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="text-sm text-slate-500">
+                        <th className="p-3">Course</th>
+                        <th className="p-3">Assignment</th>
+                        <th className="p-3">Grade</th>
+                        <th className="p-3">Feedback</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {grades.map((g) => (
+                        <tr key={g.id} className="border-t">
+                          <td className="p-3 text-sm font-medium text-slate-700">{g.course}</td>
+                          <td className="p-3 text-sm text-slate-600">{g.assignment}</td>
+                          <td className="p-3 text-sm text-slate-700">
+                            {g.grade !== null ? `${g.grade} / ${g.outOf ?? 10}` : 'Yet to grade'}
+                          </td>
+                          <td className="p-3 text-sm text-slate-600">{g.feedback || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {/* Quiz Grades */}
+              {quizGrades.length === 0 ? (
+                <div className="text-sm text-slate-500">No quiz grades available yet.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <h2 className="text-lg font-semibold mb-2">Quiz Grades</h2>
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="text-sm text-slate-500">
+                        <th className="p-3">Quiz</th>
+                        <th className="p-3">Score</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {quizGrades.map(q => (
+                        <tr key={q.id} className="border-t">
+                          <td className="p-3 text-sm font-medium text-slate-700">{q.quiz}</td>
+                          <td className="p-3 text-sm text-slate-700">
+                            {q.score !== null ? `${q.score} / ${q.outOf ?? q.score ?? 0}` : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
