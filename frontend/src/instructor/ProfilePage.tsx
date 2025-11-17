@@ -105,11 +105,11 @@ export default function InstructorProfilePage(): JSX.Element {
           <div className="flex items-center gap-2">
             <button
               onClick={() => navigate(-1)}
-              className="w-10 h-10 rounded-md bg-slate-100 dark:bg-[rgba(14, 31, 31, 1)] text-slate-800 dark:text-slate-100 flex items-center justify-center"
+              className="w-10 h-10 rounded-md bg-slate-100 dark:bg-[rgba(14, 31, 31, 1)] text-slate-800 dark:text-slate-100 flex items-center justify-center hover:shadow-sm transition"
             >
               <ChevronLeft size={18} />
             </button>
-            <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-2 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100">Dashboard</button>
+            <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-2 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 hover:shadow-sm transition">Dashboard</button>
           </div>
           <h1 className="text-2xl font-semibold text-slate-800">Instructor profile</h1>
         </div>
@@ -134,14 +134,13 @@ export default function InstructorProfilePage(): JSX.Element {
                 <div className="flex items-center gap-2">
                   {editing ? (
                     <>
-                      <button onClick={saveEdit} disabled={saving} className="px-3 py-2 bg-indigo-600 text-white rounded-md flex items-center gap-2">
+                      <button onClick={saveEdit} disabled={saving} className="px-3 py-2 bg-indigo-600 text-white rounded-md flex items-center gap-2 hover:bg-indigo-700 hover:shadow-md transition">
                         <Save size={14} /> {saving ? 'Saving...' : 'Save'}
                       </button>
-                      <button onClick={cancelEdit} className="px-3 py-2 border rounded-md flex items-center gap-2"><X size={14} /> Cancel</button>
-                    </>
-                  ) : (
-                    <button onClick={startEdit} className="px-3 py-2 bg-white border rounded-md flex items-center gap-2"><Edit2 size={14} /> Edit profile</button>
-                  )}
+                      <button onClick={cancelEdit} className="px-3 py-2 border rounded-md flex items-center gap-2 hover:shadow-sm transition"><X size={14} /> Cancel</button>
+                    ) : (
+                      <button onClick={startEdit} className="px-3 py-2 bg-white border rounded-md flex items-center gap-2 hover:shadow-sm transition"><Edit2 size={14} /> Edit profile</button>
+                    )}
                 </div>
               </div>
 
@@ -191,7 +190,7 @@ export default function InstructorProfilePage(): JSX.Element {
           <div className="mt-6 flex justify-end">
             <button
               onClick={() => navigate('/instructor-dashboard')}
-              className="px-4 py-2 rounded-md bg-indigo-600 hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400 text-white transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:ring-offset-2 dark:focus:ring-offset-slate-800"
+              className="px-4 py-2 rounded-md bg-indigo-600 hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400 text-white transition-colors hover:shadow-md focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:ring-offset-2 dark:focus:ring-offset-slate-800"
             >
               Back to dashboard
             </button>
