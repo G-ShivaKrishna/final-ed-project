@@ -15,6 +15,10 @@ urlpatterns = [
     path('courses/requests/respond/', views.respond_join_request, name='respond_join_request'),
     path('courses/students/', views.list_enrolled_students, name='list_enrolled_students'),
     path('courses/delete/', views.delete_course, name='delete_course'),
+    # list courses (optional filtering by course_db_id or instructor_id)
+    path('courses/', views.list_courses, name='list_courses'),
+    # course detail (single)
+    path('courses/detail/', views.get_course_detail, name='get_course_detail'),
     # assignments & submissions
     path('courses/assignments/create/', views.create_assignment, name='create_assignment'),
     path('courses/assignments/update/', views.update_assignment, name='update_assignment'),
@@ -27,4 +31,10 @@ urlpatterns = [
     path('courses/resources/add/', views.add_course_resource, name='add_course_resource'),
     path('courses/resources/', views.list_course_resources, name='list_course_resources'),
     path('courses/assignments/delete/', views.delete_assignment, name='delete_assignment'),
+    # --- Quiz endpoints ---
+    path('courses/quizzes/create/', views.create_quiz, name='create_quiz'),
+    path('courses/quizzes/', views.list_quizzes, name='list_quizzes'),
+    path('courses/quizzes/<uuid:quiz_id>/', views.get_quiz, name='get_quiz'),
+    path('courses/quizzes/submit/', views.submit_quiz, name='submit_quiz'),
+    path('courses/quizzes/submissions/', views.list_quiz_submissions, name='list_quiz_submissions'),
 ]

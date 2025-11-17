@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import ChatBox from '../student/ChatBot';
 import CreateCourse from './CreateCourse';
 import CoursesList from './CoursesList';
+import InstructorQuiz from './InstructorQuiz';
 
 type AssignmentWithCourse = {
   id: string | number;
@@ -183,7 +184,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
         { url: `${API_BASE}/users/courses/assignments/${id}/`, method: 'PATCH', body: payload },
         { url: `${API_BASE}/users/assignments/${id}/`, method: 'PATCH', body: payload },
         { url: `${API_BASE}/users/courses/assignments/update/`, method: 'POST', body: { assignment_id: id, ...payload } },
-        { url: `${API_BASE}/users/assignments/update/`, method: 'POST', body: { assignment_id: id, ...payload } },
+        { url: `${API_BASE}/users/courses/assignments/update/`, method: 'POST', body: { assignment_id: id, ...payload } },
       ];
 
       let success = false;
@@ -222,18 +223,21 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
   // --- end new helpers ---
 
   useEffect(() => {
-    // when location.search contains ?view=..., reflect that in the UI
+    // when location changes, reflect ?view=... or default to dashboard
     const params = new URLSearchParams(location.search);
     const view = params.get('view');
-    if (view === 'courses' || view === 'create' || view === 'dashboard') {
-      // set matching view (default 'dashboard' for explicit dashboard)
-      setActiveView(view === 'dashboard' ? 'dashboard' : view);
+    // support additional views such as 'create-quiz'
+    const allowed = ['dashboard', 'courses', 'create', 'create-quiz'];
+    if (view && allowed.includes(view)) {
+      setActiveView(view);
+    } else {
+      // no or invalid view -> dashboard
+      setActiveView('dashboard');
     }
     fetchAssignments();
     fetchProfileSummary();
-    // Optionally, add realtime subscription logic here if needed
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [/* run on mount and when location.search changes */ location.search]);
+  }, [location.pathname, location.search]);
 
   // Avoid retrying an explicit-column query that caused a 42703 (column not found).
   // Once we detect such a schema mismatch, we switch to a safe select('*') and only log once.
@@ -809,40 +813,110 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
     return { label: 'Due', color: 'bg-yellow-50 text-yellow-700' };
   }
 
+  // Ready-to-grade list used by the "Ready to grade (past 7 days)" section
+  const readyToGradeAssignments = useMemo(() => {
+    const now = Date.now();
+    const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+    return groupedAssignments
+      .flatMap((g) => g.assignments)
+      .filter((a) => {
+        if (!a?.due_date || a.status === 'graded') return false;
+        const due = new Date(a.due_date).getTime();
+        if (!Number.isFinite(due)) return false;
+        if (!(due <= now && due >= weekAgo)) return false; // past due within last 7 days
+        const count = hasSubmissions[String(a.id)] ?? 0;
+        return count > 0 || a.status === 'submitted';
+      })
+      .sort((a, b) => new Date(b.due_date).getTime() - new Date(a.due_date).getTime())
+      .slice(0, 8);
+  }, [groupedAssignments, hasSubmissions]);
+
   const QuickActionButtons = () => (
     <div className="flex flex-col gap-2">
       {/* use normal navigation (push) so browser Back returns to the real previous page */}
-      <button type="button" onClick={() => { navigate('/instructor-dashboard?view=courses'); setActiveView('courses'); }} className="text-left px-3 py-2 border rounded-md">My courses</button>
-      <button type="button" onClick={() => { navigate('/instructor-dashboard?view=create'); setActiveView('create'); }} className="text-left px-3 py-2 border rounded-md">Create course</button>
-      <button onClick={() => navigate('/inbox')} className="text-left px-3 py-2 border rounded-md">Inbox</button>
+      <button type="button" onClick={() => { navigate('/instructor-dashboard?view=courses'); setActiveView('courses'); }} className="text-left px-3 py-2 border rounded-md hover:shadow-md transition">My courses</button>
+      <button type="button" onClick={() => { navigate('/instructor-dashboard?view=create'); setActiveView('create'); }} className="text-left px-3 py-2 border rounded-md hover:shadow-md transition">Create course</button>
+      <button onClick={() => navigate('/inbox')} className="text-left px-3 py-2 border rounded-md hover:shadow-md transition">Inbox</button>
+      <button type="button" onClick={() => { navigate('/instructor-dashboard?view=create-quiz'); setActiveView('create-quiz'); }} className="text-left px-3 py-2 border rounded-md hover:shadow-md transition">
+        Create quiz
+      </button>
     </div>
   );
 
   const assignmentsOpen = false; // Instructor quick-view modal can be added later if needed
 
-  // theme state & helpers (same behavior as student dashboard)
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => (typeof window !== 'undefined' && localStorage.getItem('theme') === 'dark') ? 'dark' : 'light');
+  // Minimal helper to record opened course (used by navigation/submission open)
+  const recordOpenedCourse = (course?: { id?: string | number; name?: string; title?: string; course_id?: string; code?: string }) => {
+    if (!course?.id) return;
+    const normalized = {
+      id: course.id,
+      title: course.name ?? course.title ?? '',
+      code: course.course_id ?? course.code ?? '',
+    };
+    // update recentOpenedCourses locally and persist
+    setRecentOpenedCourses((prev) => {
+      const filtered = prev.filter((c) => String(c.id) !== String(normalized.id));
+      const next = [normalized, ...filtered].slice(0, 4);
+      try { localStorage.setItem('instructor-recent-opened-courses', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
 
+  // Navigate to a course (Courses view) and auto-open it
+  function goToCourse(course?: { id?: string | number; name?: string; title?: string; course_id?: string; code?: string }) {
+    if (!course?.id) return;
+    recordOpenedCourse(course);
+    const target = `/instructor-dashboard?view=courses&course_db_id=${encodeURIComponent(String(course.id))}`;
+    setActiveView('courses');
+    navigate(target, { state: { open_course_id: course.id } });
+  }
+
+  // Navigate to submissions for an assignment (prefers Courses view with focus)
+  function navigateToSubmissions(a: AssignmentWithCourse) {
+    if (!a) return;
+    recordOpenedCourse(a.course);
+    const courseId = a.course?.id;
+    if (!courseId) {
+      navigate(`/instructor/assignments/${a.id}/submissions`);
+      return;
+    }
+    const target = `/instructor-dashboard?view=courses&course_db_id=${encodeURIComponent(String(courseId))}`;
+    setActiveView('courses');
+    navigate(target, { state: { open_course_id: courseId, focus_assignment_id: a.id } });
+  }
+
+  // theme state (simplified)
+  const [theme, setTheme] = useState<'light' | 'dark'>(() =>
+    (typeof window !== 'undefined' && localStorage.getItem('theme') === 'dark') ? 'dark' : 'light'
+  );
+
+  // apply student-style theme (inject overrides + toggle html.dark)
   useEffect(() => {
     try { applyTheme(theme); } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [theme]);
 
+  function toggleTheme() {
+    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  }
+
+  // Student-style theme helpers
   function applyTheme(t: 'light' | 'dark') {
     try {
       if (t === 'dark') {
+        removeLightStyles();
         document.documentElement.classList.add('dark');
         injectDarkStyles();
       } else {
         document.documentElement.classList.remove('dark');
         removeDarkStyles();
+        injectLightStyles();
+        // ensure page background matches student light theme
+        document.body.style.backgroundColor = '#f9fafb';
+        document.documentElement.style.backgroundColor = '#f9fafb';
       }
       localStorage.setItem('theme', t);
-      setTheme(t);
-    } catch (e) {}
+    } catch {}
   }
-
-  function toggleTheme() { applyTheme(theme === 'dark' ? 'light' : 'dark'); }
 
   function injectDarkStyles() {
     if (document.getElementById('dark-theme-overrides')) return;
@@ -875,169 +949,44 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
     if (el) el.remove();
   }
 
-  // urgent assignments: due within next 48 hours and not graded (allow instructor to open & grade quickly)
-  const urgentAssignments = useMemo(() => {
-    const now = Date.now();
-    const windowMs = 48 * 60 * 60 * 1000; // 48 hours
-    return groupedAssignments
-      .flatMap((g) => g.assignments.map((a) => ({ ...a, groupDate: g.date })))
-      .filter((a) => {
-        try {
-          if (!a.due_date) return false;
-          const due = new Date(a.due_date).getTime();
-          if (!Number.isFinite(due)) return false;
-          const withinWindow = due >= now && due <= now + windowMs;
-          const needsAttention = a.status !== 'graded';
-          return withinWindow && needsAttention;
-        } catch {
-          return false;
-        }
-      })
-      .sort((x, y) => new Date(x.due_date).getTime() - new Date(y.due_date).getTime())
-      .slice(0, 4);
-  }, [groupedAssignments]);
-
-  const readyToGradeAssignments = useMemo(() => {
-    const now = Date.now();
-    const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
-    return groupedAssignments
-      .flatMap((g) => g.assignments)
-      .filter((a) => {
-        if (!a?.due_date || a.status === 'graded') return false;
-        const due = new Date(a.due_date).getTime();
-        if (!Number.isFinite(due)) return false;
-        // only past-due within the last 7 days
-        if (!(due <= now && due >= weekAgo)) return false;
-        // must have at least one submitted submission (or status already says submitted)
-        const count = hasSubmissions[String(a.id)] ?? 0;
-        return count > 0 || a.status === 'submitted';
-      })
-      // newest past-due first
-      .sort((a, b) => new Date(b.due_date).getTime() - new Date(a.due_date).getTime())
-      .slice(0, 8);
-  }, [groupedAssignments, hasSubmissions]);
-
-  // --- new recent-opened course tracking ---
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('instructor-recent-opened-courses');
-      if (stored) setRecentOpenedCourses(JSON.parse(stored));
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  const recordOpenedCourse = (course?: { id?: string | number; name?: string; title?: string; course_id?: string; code?: string }) => {
-    if (!course?.id) return;
-    const normalized = {
-      id: course.id,
-      title: course.name ?? course.title ?? '',
-      code: course.course_id ?? course.code ?? '',
-    };
-    setRecentOpenedCourses((prev) => {
-      const filtered = prev.filter((c) => String(c.id) !== String(normalized.id));
-      const next = [normalized, ...filtered].slice(0, 4);
-      try { localStorage.setItem('instructor-recent-opened-courses', JSON.stringify(next)); } catch {}
-      return next;
-    });
-    // If title missing, fetch it (one-shot) from courses table
-    if (!normalized.title) {
-      (async () => {
-        try {
-          const { data, error } = await supabase
-            .from('courses')
-            .select('name, course_id')
-            .eq('id', course.id)
-            .single();
-          if (!error && data?.name) {
-            setRecentOpenedCourses((prev) => {
-              const updated = prev.map((c) =>
-                String(c.id) === String(course.id) ? { ...c, title: data.name, code: c.code || data.course_id } : c
-              );
-              try { localStorage.setItem('instructor-recent-opened-courses', JSON.stringify(updated)); } catch {}
-              return updated;
-            });
-          }
-        } catch {}
-      })();
-    }
-  };
-  // --- end new tracking ---
-
-  // Enrich already stored recentOpenedCourses that lack titles (e.g., persisted earlier only with code)
-  useEffect(() => {
-    const missing = recentOpenedCourses.filter((c) => !c.title);
-    if (missing.length === 0) return;
-    (async () => {
-      for (const m of missing) {
-        try {
-          const { data, error } = await supabase
-            .from('courses')
-            .select('name, course_id')
-            .eq('id', m.id)
-            .single();
-          if (!error && data?.name) {
-            setRecentOpenedCourses((prev) => {
-              const updated = prev.map((c) =>
-                String(c.id) === String(m.id) ? { ...c, title: data.name, code: c.code || data.course_id } : c
-              );
-              try { localStorage.setItem('instructor-recent-opened-courses', JSON.stringify(updated)); } catch {}
-              return updated;
-            });
-          }
-        } catch {}
-      }
-    })();
-  }, [recentOpenedCourses]);
-
-  // Navigate to a course and record it in "recently opened"
-  function goToCourse(course?: { id?: string | number; name?: string; title?: string; course_id?: string; code?: string }) {
-    if (!course?.id) return;
-    const normalized = {
-      id: course.id,
-      title: course.name ?? course.title ?? '',
-      code: course.course_id ?? course.code ?? '',
-    };
-    try { recordOpenedCourse(course); } catch {}
-
-    // Navigate to the dashboard's courses view and include the course_db_id so CoursesList can auto-open it
-    // This avoids relying on /instructor/courses/manage/:id routes that may not exist.
-    const target = `/instructor-dashboard?view=courses&course_db_id=${encodeURIComponent(String(normalized.id))}`;
-    // ensure the dashboard switches to the courses view
-    setActiveView('courses');
-    navigate(target, { state: { open_course_id: normalized.id } });
+  function injectLightStyles() {
+    if (document.getElementById('light-theme-overrides')) return;
+    const css = `
+      body, .min-h-screen { background: #f9fafb !important; color: #1e293b !important; }
+      .bg-gray-50 { background-color: #f1f5f9 !important; }
+      .bg-white { background-color: #ffffff !important; }
+      .text-slate-800, .text-slate-900 { color: #1e293b !important; }
+      .text-slate-700 { color: #334155 !important; }
+      .text-slate-600 { color: #475569 !important; }
+      .text-slate-500, .text-slate-400 { color: #64748b !important; }
+      .border, .border-slate-200 { border-color: #e2e8f0 !important; }
+      .shadow-none, .shadow-sm { box-shadow: 0 1px 2px rgba(0,0,0,0.04) !important; }
+      input, textarea { background:#ffffff !important; color:#1e293b !important; border-color:#cbd5e1 !important; }
+      .light-surface { background:#f9fafb !important; }
+    `;
+    const s = document.createElement('style');
+    s.id = 'light-theme-overrides';
+    s.innerHTML = css;
+    document.head.appendChild(s);
   }
 
-  // Navigate directly to an instructor submissions grading page for an assignment
-  function navigateToSubmissions(a: AssignmentWithCourse) {
-    if (!a) return;
-    // Record the opened course for recent list
-    recordOpenedCourse(a.course);
-
-    // Navigate to the dashboard's courses view and include the course_db_id so CoursesList can auto-open it.
-    // Also include the assignment id in navigation state as `focus_assignment_id` so the course view
-    // can optionally highlight or focus that assignment after opening.
-    const courseId = a.course?.id;
-    if (!courseId) {
-      // fallback to existing assignment-level route if course id missing
-      const primary = `/instructor/assignments/${a.id}/submissions`;
-      navigate(primary);
-      return;
-    }
-
-    const target = `/instructor-dashboard?view=courses&course_db_id=${encodeURIComponent(String(courseId))}`;
-    setActiveView('courses');
-    navigate(target, { state: { open_course_id: courseId, focus_assignment_id: a.id } });
+  function removeLightStyles() {
+    const el = document.getElementById('light-theme-overrides');
+    if (el) el.remove();
   }
 
   return (
-    // make top-level container and most text theme-aware so dark mode is consistent
-    <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-50 dark:from-slate-900 dark:to-slate-900 p-6 text-slate-800 dark:text-slate-100">
+    <div className="min-h-screen p-6 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100">
       <div className="max-w-7xl mx-auto">
         <header className="flex items-center justify-between mb-6">
           <div className="flex flex-col justify-center">
-            <h1 className="text-3xl font-semibold text-slate-800">Instructor dashboard</h1>
-            <p className="text-sm text-slate-500">Welcome back, {profileName ?? 'Instructor'}</p>
+            <h1
+              className="text-3xl font-semibold text-slate-900 dark:text-slate-100 cursor-pointer hover:underline"
+              onClick={() => { navigate('/instructor-dashboard?view=dashboard'); setActiveView('dashboard'); }}
+            >
+              Instructor dashboard
+            </h1>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Welcome back, {profileName ?? 'Instructor'}</p>
           </div>
 
           <div className="flex items-center gap-3 relative">
@@ -1059,19 +1008,25 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
               <span className={`relative z-10 block w-6 h-6 bg-white rounded-full shadow transform transition-transform duration-300 ${theme === 'dark' ? 'translate-x-6 rotate-6' : 'translate-x-0 rotate-0'}`} />
             </button>
 
-            <button onClick={onLogout} className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg shadow hover:bg-red-700 transition">Logout</button>
+            <button onClick={onLogout} className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg shadow hover:bg-red-700 hover:shadow-md transition">Logout</button>
 
-            <button onClick={() => setMenuOpen((v) => !v)} className="h-10 w-10 flex items-center justify-center rounded-lg bg-white shadow-sm hover:shadow-md" aria-haspopup="menu" aria-expanded={menuOpen}>
+            <button onClick={() => setMenuOpen((v) => !v)} className="h-10 w-10 flex items-center justify-center rounded-lg bg-white shadow-sm hover:shadow-md transition" aria-haspopup="menu" aria-expanded={menuOpen}>
               <MoreVertical size={20} />
             </button>
 
             {menuOpen && (
               <div ref={menuRef} className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg ring-1 ring-black ring-opacity-5 py-1 z-50">
-                <button onClick={handleRefresh} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Refresh</button>
-                <button onClick={handleExportCSV} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Export CSV</button>
+               <button
+                 onClick={() => { navigate('/instructor-dashboard?view=dashboard'); setActiveView('dashboard'); setMenuOpen(false); }}
+                 className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 hover:shadow-sm transition"
+               >
+                 Dashboard
+               </button>
+                <button onClick={handleRefresh} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 hover:shadow-sm transition">Refresh</button>
+                <button onClick={handleExportCSV} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 hover:shadow-sm transition">Export CSV</button>
                 {/* Push a history entry so Back goes to the previous page */}
-                <button onClick={() => { navigate('/instructor-dashboard?view=courses'); setActiveView('courses'); setMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">My courses</button>
-                <button onClick={() => { navigate('/inbox'); setMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Inbox</button>
+                <button onClick={() => { navigate('/instructor-dashboard?view=courses'); setActiveView('courses'); setMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 hover:shadow-sm transition">My courses</button>
+                <button onClick={() => { navigate('/inbox'); setMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 hover:shadow-sm transition">Inbox</button>
               </div>
             )}
           </div>
@@ -1081,21 +1036,22 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
           <CreateCourse />
         ) : activeView === 'courses' ? (
           <CoursesList />
+        ) : activeView === 'create-quiz' ? (
+          <InstructorQuiz />
         ) : (
           <>
-            {/* Recent posts: latest assignments created */}
+            {/* Recent posts */}
             <div className="mb-6">
-              <h3 className="text-sm text-slate-600 font-medium mb-3">Recent posts</h3>
+              <h3 className="text-sm text-slate-600 dark:text-slate-400 font-medium mb-3">Recent posts</h3>
               <div className="flex flex-col sm:flex-row gap-3 items-stretch">
                 {recentPosts.map((p) => (
                   // card: use dark background + dark:border for consistent contrast
-                  <div key={p.id} className="bg-white dark:bg-slate-800 rounded-lg p-3 shadow-sm dark:shadow-none flex-1 min-w-0 border border-slate-200 dark:border-slate-700">
+                  <div key={p.id} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-lg p-3 flex-1 min-w-0">
                     <div className="flex items-start justify-between">
                       <div>
-                        <div className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">{p.title}</div>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">{p.title}</div>
                         <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{p.course?.code} • {formatDate(p.due_date)}</div>
                       </div>
-                      {/* status pill removed for instructor recent posts (instructor doesn't submit) */}
                     </div>
                   </div>
                 ))}
@@ -1107,25 +1063,22 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
               {/* Main column */}
               <main className="lg:col-span-3">
                 {/* ready-to-grade card */}
-                <section className="bg-white dark:bg-slate-800 rounded-xl shadow-sm dark:shadow-none p-5 mb-6 border border-slate-200 dark:border-slate-700">
+                <section className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl p-5 mb-6">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-semibold text-slate-700">Ready to grade (past 7 days)</h3>
-                    <span className="text-xs text-slate-500">{readyToGradeAssignments.length} assignment{readyToGradeAssignments.length > 1 ? 's' : ''}</span>
+                    <h3 className="text-lg font-semibold text-slate-700 dark:text-slate-200">Ready to grade (past 7 days)</h3>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">{readyToGradeAssignments.length} assignment{readyToGradeAssignments.length > 1 ? 's' : ''}</span>
                   </div>
                   {readyToGradeAssignments.length === 0 ? (
                     <div className="mt-4 text-sm text-slate-500 dark:text-slate-400">No assignments are ready to grade yet.</div>
                   ) : (
                     <div className="mt-4 space-y-3">
                       {readyToGradeAssignments.map((a) => (
-                        <article key={`ready-${a.id}`} className="border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white dark:bg-slate-800">
+                        <article key={`ready-${a.id}`} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                           <div>
-                            <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">{a.title}</div>
+                            <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{a.title}</div>
                             <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{a.course?.code ?? '—'} • due {new Date(a.due_date).toLocaleString()}</div>
                           </div>
-                          <button
-                            onClick={() => navigateToSubmissions(a)}
-                            className="text-xs px-3 py-1 rounded-full border border-indigo-200 text-indigo-600 hover:bg-indigo-50"
-                          >
+                          <button className="text-xs px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 text-indigo-600 hover:bg-indigo-50 hover:shadow-sm transition">
                             Open submissions
                           </button>
                         </article>
@@ -1136,8 +1089,8 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
 
                 <div className="space-y-6">
                   {groupedAssignments.map((group) => (
-                    <section key={group.date} className="bg-white dark:bg-slate-800 rounded-xl shadow-sm dark:shadow-none p-5 border border-slate-200 dark:border-slate-700">
-                      <h3 className="text-sm text-slate-500 font-medium mb-4">{group.date}</h3>
+                    <section key={group.date} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl p-5">
+                      <h3 className="text-sm text-slate-500 dark:text-slate-400 font-medium mb-4">{group.date}</h3>
 
                       <div className="space-y-3">
                         {group.assignments.map((a) => (
@@ -1147,7 +1100,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                             <div className="flex-1">
                               <div className="flex items-start justify-between gap-4">
                                 <div>
-                                  <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">{a.title}</div>
+                                  <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{a.title}</div>
                                   <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{a.course?.code} • {formatDate(a.due_date)}</div>
                                 </div>
 
@@ -1159,7 +1112,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                                 </div>
                               </div>
 
-                              <div className="mt-3 flex items-center gap-3 text-sm text-slate-500">
+                              <div className="mt-3 flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
                                 <div className="flex items-center gap-1">
                                   <Clock size={14} />
                                   <span className="dark:text-slate-300">{new Date(a.due_date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
@@ -1169,16 +1122,16 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                                   <span className="dark:text-slate-300">{a.completed_items ?? 0} items</span>
                                 </div>
 
-                                <button onClick={() => goToCourse(a.course)} className="ml-auto text-sm text-indigo-600 hover:underline">View submissions</button>
+                                <button onClick={() => goToCourse(a.course)} className="ml-auto text-sm text-indigo-600 hover:underline hover:shadow-sm transition">View submissions</button>
                                 {/* Replace course-level navigation with assignment submissions navigation */}
                                 <button
                                   onClick={() => navigateToSubmissions(a)}
-                                  className="ml-2 text-sm text-indigo-600 underline hover:no-underline"
+                                  className="ml-2 text-sm text-indigo-600 underline hover:no-underline hover:shadow-sm transition"
                                   title="Open grading view"
                                 >
                                   Grade
                                 </button>
-                              </div>
+                                </div>
                             </div>
                           </article>
                         ))}
@@ -1191,8 +1144,8 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
               {/* Right column */}
               <aside className="space-y-6 lg:sticky lg:top-6 min-h-0">
                 {recentOpenedCourses.length > 0 && (
-                  <div className="bg-white rounded-xl p-4 shadow-sm">
-                    <h4 className="text-sm font-medium text-slate-700 mb-3">Recently opened</h4>
+                  <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl p-4">
+                    <h4 className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-3">Recently opened</h4>
                     <div className="flex flex-col gap-2">
                       {recentOpenedCourses.map((course) => (
                         <button
@@ -1210,14 +1163,14 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                   </div>
                 )}
 
-                <div className="bg-white rounded-xl p-4 shadow-sm">
+                <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl p-4">
                   <div className="flex items-center gap-3">
                     <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-pink-500 rounded-full flex items-center justify-center text-white">
                       <User size={20} />
                     </div>
                     <div>
-                      <div className="text-sm font-semibold text-slate-800">{profileName ?? 'Instructor'}</div>
-                      <div className="text-xs text-slate-500">{profileEmail ?? ''}</div>
+                      <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{profileName ?? 'Instructor'}</div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">{profileEmail ?? ''}</div>
                     </div>
                   </div>
 
@@ -1227,28 +1180,28 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                   </div>
 
                   <div className="mt-4 grid grid-cols-2 gap-3">
-                    <div className="p-3 bg-gray-50 rounded">
-                      <div className="text-xs text-slate-500">Courses taught</div>
-                      <div className="text-lg font-semibold text-slate-800">{typeof coursesCount === 'number' ? coursesCount : '—'}</div>
+                    <div className="p-3 bg-gray-50 dark:bg-slate-800/40 rounded border border-slate-200 dark:border-slate-700">
+                      <div className="text-xs text-slate-500 dark:text-slate-400">Courses taught</div>
+                      <div className="text-lg font-semibold text-slate-900 dark:text-slate-100">{typeof coursesCount === 'number' ? coursesCount : '—'}</div>
                     </div>
-                    <div className="p-3 bg-gray-50 rounded">
-                      <div className="text-xs text-slate-500">Pending grading</div>
-                      <div className="text-lg font-semibold text-slate-800">{typeof pendingGradingCount === 'number' ? pendingGradingCount : '—'}</div>
+                    <div className="p-3 bg-gray-50 dark:bg-slate-800/40 rounded border border-slate-200 dark:border-slate-700">
+                      <div className="text-xs text-slate-500 dark:text-slate-400">Pending grading</div>
+                      <div className="text-lg font-semibold text-slate-900 dark:text-slate-100">{typeof pendingGradingCount === 'number' ? pendingGradingCount : '—'}</div>
                     </div>
                   </div>
                 </div>
 
-                <div className="bg-white rounded-xl p-4 shadow-sm">
-                  <h4 className="text-sm font-medium text-slate-700 mb-3">Quick actions</h4>
+                <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl p-4">
+                  <h4 className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-3">Quick actions</h4>
                   <div className="flex flex-col gap-2">
                     {/* use push so Back goes to previous page */}
-                    <button type="button" onClick={() => { navigate('/instructor-dashboard?view=create'); setActiveView('create'); }} className="text-left px-3 py-2 bg-indigo-600 text-white rounded-md">Create course</button>
+                    <button type="button" onClick={() => { navigate('/instructor-dashboard?view=create'); setActiveView('create'); }} className="text-left px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 hover:shadow-md transition">Create course</button>
                     <QuickActionButtons />
                   </div>
                 </div>
 
-                <div className="bg-white rounded-xl p-4 shadow-sm">
-                  <h4 className="text-sm font-medium text-slate-700 mb-3">Calendar</h4>
+                <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl p-4">
+                  <h4 className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-3">Calendar</h4>
                   <div className="mt-2 grid grid-cols-7 gap-2 text-center text-xs">
                     {next7Days.map((d) => {
                       const key = dateKey(d);
@@ -1290,9 +1243,9 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                 </div>
 
                 <div className="hidden lg:block">
-                  <div className="bg-white rounded-xl p-4 shadow-sm">
-                    <h5 className="text-sm font-medium text-slate-700">Help & resources</h5>
-                    <p className="text-xs text-slate-500 mt-2">Visit our docs or contact support if you need help.</p>
+                 <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-xl p-4">
+                    <h5 className="text-sm font-medium text-slate-700 dark:text-slate-200">Help & resources</h5>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">Visit our docs or contact support if you need help.</p>
                   </div>
                 </div>
               </aside>
@@ -1301,47 +1254,51 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
         )}
 
         {/* Edit due modal */}
-         {editModalOpen && editingAssignment && (
+        {editModalOpen && editingAssignment && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
             <div className="absolute inset-0 bg-black/40" onClick={closeEditDue} />
-            {/* modal: ensure dark bg and readable text */}
-            <div className="relative bg-white dark:bg-slate-800 rounded-lg p-6 z-50 w-full max-w-md border border-slate-200 dark:border-slate-700">
- <h3 className="text-lg mb-2">Edit due date</h3>
- <div className="text-sm text-slate-600 dark:text-slate-400 mb-3">{editingAssignment.title}</div>
- <label className="block text-xs text-slate-600 mb-2">Due date and time</label>
-               <input
-                 type="datetime-local"
-                 value={editDueValue}
-                 onChange={(e) => setEditDueValue(e.target.value)}
-                 className="w-full border px-3 py-2 rounded mb-3"
-               />
+           <div className="relative bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-none rounded-lg p-6 z-50 w-full max-w-md">
+              <h3 className="text-lg mb-2 text-slate-900 dark:text-slate-100">Edit due date</h3>
+             <div className="text-sm text-slate-600 dark:text-slate-400 mb-3">{editingAssignment.title}</div>
 
-               {/* NEW: file upload for assignment/syllabus */}
-               <label className="block text-xs text-slate-600 mb-2">Attach file (PDF)</label>
-               <div className="flex items-center gap-2 mb-2">
-                 <input type="file" accept="application/pdf" onChange={handleEditFileChange} className="block" />
-                 {editFileUploading && <div className="text-xs text-slate-500">Uploading…</div>}
-               </div>
-               {editFileError && <div className="text-xs text-red-600 mb-2">{editFileError}</div>}
-               <textarea
-                 readOnly
-                 value={editFileUrl}
-                 placeholder="Uploaded file URL will appear here"
-                 className="w-full border px-3 py-2 rounded mb-3 resize-y"
-                 rows={3}
-               />
+              <label className="block text-xs text-slate-600 mb-2">Due date and time</label>
+              <input
+                type="datetime-local"
+                value={editDueValue}
+                onChange={(e) => setEditDueValue(e.target.value)}
+                className="w-full border px-3 py-2 rounded mb-3"
+              />
 
-               {editError && <div className="text-xs text-red-600 mb-2">{editError}</div>}
-               <div className="flex justify-end gap-2">
-                 <button onClick={closeEditDue} className="px-3 py-1 border rounded">Cancel</button>
-                 <button onClick={submitEditDue} disabled={editLoading} className={`px-3 py-1 rounded ${editLoading ? 'bg-indigo-300 text-white' : 'bg-indigo-600 text-white'}`}>
+              <label className="block text-xs text-slate-600 mb-2">Attach file (PDF)</label>
+              <div className="flex items-center gap-2 mb-2">
+                <input type="file" accept="application/pdf" onChange={handleEditFileChange} className="block" />
+                {editFileUploading && <div className="text-xs text-slate-500">Uploading…</div>}
+              </div>
+              {editFileError && <div className="text-xs text-red-600 mb-2">{editFileError}</div>}
+              <textarea
+                readOnly
+                value={editFileUrl}
+                placeholder="Uploaded file URL will appear here"
+                className="w-full border px-3 py-2 rounded mb-3 resize-y"
+                rows={3}
+              />
+
+              {editError && <div className="text-xs text-red-600 mb-2">{editError}</div>}
+              <div className="flex justify-end gap-2">
+                <button onClick={closeEditDue} className="px-3 py-1 border rounded">Cancel</button>
+                <button
+                  onClick={submitEditDue}
+                  disabled={editLoading}
+                  className={`px-3 py-1 rounded ${editLoading ? 'bg-indigo-300 text-white' : 'bg-indigo-600 text-white'}`}
+                >
                   {editLoading ? 'Saving…' : 'Save'}
                 </button>
-               </div>
-             </div>
-           </div>
-         )}
-       </div>
-     </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>  
+    </div>  
   );
 }

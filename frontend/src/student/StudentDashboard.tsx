@@ -642,27 +642,55 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
                       {g.assignments.map(a => (
                         <div key={a.id} className="flex items-center justify-between p-3 border rounded">
                           <div>
-                            <div className="font-medium">{a.title}</div>
-                            <div className="text-xs text-slate-500">{a.course?.name ?? a.course?.code} • {formatDate(a.due_date)}</div>
-                            {/* show attachment link if present in description or submission */}
-                            {a.submission?.file_url && <div className="text-xs mt-1"><a href={a.submission.file_url} target="_blank" rel="noreferrer" className="text-indigo-600">Download submission</a></div>}
+                            <div className="font-medium flex items-center gap-2">
+                              {a.title}
+                              {/* Removed quiz badge */}
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              {a.course?.name ?? a.course?.code} • {formatDate(a.due_date)}
+                            </div>
+                            {/* Removed quiz points display */}
+                            {a.submission?.file_url && (
+                              <div className="text-xs mt-1">
+                                <a
+                                  href={a.submission.file_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-indigo-600"
+                                >
+                                  Download submission
+                                </a>
+                              </div>
+                            )}
                           </div>
                           <div className="flex flex-col items-end gap-2">
+                            {/* Status pill */}
                             <div className={`px-2 py-1 rounded-full text-xs border ${statusColor(a.status)}`}>{a.status}</div>
                             <div className="text-xs text-slate-400">
                               {a.submission?.grade !== undefined && a.submission?.grade !== null
                                 ? `${a.submission.grade} / ${a.points ?? 10} pts`
                                 : `${a.points ?? 10} pts`}
                             </div>
-
-                            {/* New: don't show submit button when past due; show message instead */}
-                            {isPastDue(a) ? (
-                              <div className="mt-2 text-xs text-red-600 font-medium">Deadline passed</div>
-                            ) : (
-                              a.status !== 'graded' && (
-                                <button onClick={() => handleInitiateUpload(a.id, a.course?.id)} className="mt-2 px-2 py-1 bg-indigo-600 text-white text-xs rounded">Submit</button>
-                              )
-                            )}
+                            {(() => {
+                              const submitted = a.status === 'submitted' || a.submission?.status === 'submitted';
+                              if (isPastDue(a)) {
+                                return <div className="mt-2 text-xs text-red-600 font-medium">Deadline passed</div>;
+                              }
+                              if (submitted) {
+                                return <span className="mt-2 text-xs px-2 py-1 rounded bg-blue-50 text-blue-700 border border-blue-200">Submitted</span>;
+                              }
+                              if (a.status === 'graded') {
+                                return <span className="mt-2 text-xs px-2 py-1 rounded bg-green-50 text-green-700 border border-green-200">Graded</span>;
+                              }
+                              return (
+                                <button
+                                  onClick={() => handleInitiateUpload(a.id, a.course?.id)}
+                                  className="mt-2 px-2 py-1 bg-indigo-600 text-white text-xs rounded"
+                                >
+                                  Submit
+                                </button>
+                              );
+                            })()}
                           </div>
                         </div>
                       ))}
@@ -797,7 +825,6 @@ export default function StudentDashboard({ onLogout }: { onLogout: () => void })
 
         {/* hidden file input */}
         <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden" onChange={handleFileChange} />
-
       </div>
     </div>
   );

@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import SubmissionList from '../components/SubmissionList';
 import { fetchCourseSubmissions } from '../lib/api';
 
 type Course = {
@@ -21,7 +20,7 @@ type JoinRequest = {
 
 export default function CoursesList(): JSX.Element {
   const location = useLocation();
-  const urlNavigate = useNavigate();
+  const navigate = useNavigate();
 
   const [courses, setCourses] = useState<Course[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -33,6 +32,7 @@ export default function CoursesList(): JSX.Element {
   const [reqLoading, setReqLoading] = useState(false);
   const [assignments, setAssignments] = useState<any[] | null>(null);
   const [resources, setResources] = useState<any[] | null>(null);
+  const [quizzes, setQuizzes] = useState<any[] | null>(null);
   const [addAssignOpen, setAddAssignOpen] = useState(false);
   const [addResOpen, setAddResOpen] = useState(false);
   // assignment edit state
@@ -45,9 +45,12 @@ export default function CoursesList(): JSX.Element {
   const [editResOpen, setEditResOpen] = useState(false);
   const [editingResource, setEditingResource] = useState<any | null>(null);
   const [editResForm, setEditResForm] = useState({ title: '', content: '', video_url: '', type: 'syllabus' as 'syllabus' | 'video' });
+  // quiz edit state
+  const [editQuizOpen, setEditQuizOpen] = useState(false);
+  const [editingQuiz, setEditingQuiz] = useState<any | null>(null);
+  const [editQuizForm, setEditQuizForm] = useState({ title: '', questions: '' }); // questions as JSON string
 
   const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
-  const navigate = useNavigate();
 
   // file upload state & refs for assignment/resource attachments
   const [assignFile, setAssignFile] = useState<File | null>(null);
@@ -95,7 +98,7 @@ export default function CoursesList(): JSX.Element {
       const publicUrl = (pubRes as any)?.data?.publicUrl || (pubRes as any)?.publicURL || (pubRes as any)?.public_url || '';
       if (publicUrl) return publicUrl;
       const { data: signedData, error: signedErr } = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60);
-      if (!signedErr && signedData?.signedURL) return signedData.signedURL;
+      if (!signedErr && signedData?.signedUrl) return signedData.signedUrl;
     } catch (e) {
       console.warn('getPublicUrlOrSigned failed', e);
     }
@@ -107,7 +110,7 @@ export default function CoursesList(): JSX.Element {
     if (!file) return '';
     try {
       const path = `${courseId}/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
-      const { data, error } = await supabase.storage.from('assignments').upload(path, file, { upsert: true });
+      const { error } = await supabase.storage.from('assignments').upload(path, file, { upsert: true });
       if (error) throw error;
       const publicUrl = await getPublicUrlOrSigned('assignments', path);
       return publicUrl;
@@ -190,6 +193,7 @@ export default function CoursesList(): JSX.Element {
     setStudents(null);
     setAssignments(null);
     setResources(null);
+    setQuizzes(null);
     setReqLoading(true);
     setError(null);
     try {
@@ -248,37 +252,58 @@ export default function CoursesList(): JSX.Element {
       } catch {
         setAssignments([]);
       }
+      // fetch quizzes (base metadata)
+      try {
+        const qres = await fetch(`${API_BASE}/users/courses/quizzes/?course_db_id=${encodeURIComponent(course.id)}`);
+        const qjson = await qres.json().catch(() => ({}));
+        const list = Array.isArray(qjson.quizzes) ? qjson.quizzes : [];
+        const normalized = list.map((q: any) => {
+          let questions = q.questions;
+          if (Array.isArray(questions)) {
+            return { ...q, total_points: q.total_points ?? questions.length };
+          }
+          return { ...q, total_points: q.total_points ?? 0, questions: [] };
+        });
+        setQuizzes(normalized);
+      } catch { setQuizzes([]); }
+      // fetch all quiz submissions for this course and enrich with student email/username
+      try {
+        const qsres = await fetch(`${API_BASE}/users/courses/quizzes/submissions/?course_db_id=${encodeURIComponent(course.id)}&include_students=1`);
+        const qsjson = await qsres.json().catch(() => ({}));
+        const subs = Array.isArray(qsjson.submissions) ? qsjson.submissions : [];
 
-      // fetch course resources (syllabus/videos)
-      try {
-        const rres = await fetch(`${API_BASE}/users/courses/resources/?course_db_id=${encodeURIComponent(course.id)}&user_id=${encodeURIComponent(instructorId)}`);
-        const rjson = await rres.json().catch(() => []);
-        if (rres.ok) setResources(rjson || []);
-        else setResources([]);
-      } catch {
-        setResources([]);
-      }
-      // new: fetch all submissions for this course (instructor view)
-      try {
-        const subs = await fetchCourseSubmissions(course.id, instructorId);
-        // subs expected to be array of submissions with student info and assignment reference
-        // attach submissions to the previously-normalized assignments (use the local normalized array if available)
-        if (Array.isArray(subs) && subs.length > 0) {
-          const map = new Map<string, any[]>();
-          subs.forEach((s: any) => {
-            const aid = String(s.assignment_id);
-            if (!map.has(aid)) map.set(aid, []);
-            map.get(aid).push(s);
-          });
-          // read current assignments from state (fallback to []) then attach submissions
-          setAssignments((prev) => {
-            const base = Array.isArray(prev) ? prev : [];
-            return base.map((a: any) => ({ ...a, submissions: map.get(String(a.id)) || [] }));
-          });
+        // NEW: look up student emails from Supabase users table
+        try {
+          const ids = Array.from(new Set(subs.map((s: any) => String(s.student_id)).filter(Boolean)));
+          if (ids.length) {
+            const { data: urows, error: uerr } = await supabase
+              .from('users')
+              .select('id, email, username')
+              .in('id', ids);
+            if (!uerr && Array.isArray(urows)) {
+              const uMap = new Map(urows.map((u: any) => [String(u.id), u]));
+              subs.forEach((s: any) => {
+                const u = uMap.get(String(s.student_id));
+                if (u) s.student = { id: u.id, email: u.email, username: u.username };
+              });
+            }
+          }
+        } catch {
+          // ignore enrichment errors; fallback to showing student_id
         }
-      } catch (_e) {
-        // ignore
-      }
+
+        const map = new Map<string, any[]>();
+        subs.forEach((s: any) => {
+          const kid = String(s.quiz_id);
+          const arr = map.get(kid) || [];
+          arr.push(s);
+          map.set(kid, arr);
+        });
+        setQuizzes(prev => {
+          if (!Array.isArray(prev)) return prev;
+          return prev.map(q => ({ ...q, submissions: map.get(String(q.id)) || [] }));
+        });
+      } catch { /* ignore */ }
     } catch (err: any) {
       setRequests([]);
       setStudents([]);
@@ -423,7 +448,7 @@ export default function CoursesList(): JSX.Element {
           if (!res.ok) throw new Error(body?.error || `Delete failed: ${res.status}`);
 
           // refresh assignments list
-          await openCourseModal(selectedCourse);
+          if (selectedCourse) await openCourseModal(selectedCourse);
         } catch (err: any) {
           setError(err?.message || String(err));
         }
@@ -536,6 +561,55 @@ export default function CoursesList(): JSX.Element {
     }
   }
 
+  // missing grading handlers
+  function openGradeModal(sub: any) {
+    setGradingSubmission(sub);
+    setGradeValue(sub?.grade ?? '');
+    setGradeFeedback(sub?.feedback ?? '');
+    setGradingError(null);
+    setGradeModalOpen(true);
+  }
+  function closeGradeModal() {
+    setGradeModalOpen(false);
+    setGradingSubmission(null);
+    setGradeValue('');
+    setGradeFeedback('');
+    setGradingError(null);
+  }
+  async function submitGrade() {
+    if (!gradingSubmission || (!Number.isFinite(Number(gradeValue)) && gradeValue !== '')) {
+      setGradingError('Enter a numeric grade');
+      return;
+    }
+    setGradingLoading(true);
+    setGradingError(null);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const graderId = sessionData?.session?.user?.id;
+      if (!graderId) throw new Error('Not authenticated');
+      const payload = {
+        grader_id: graderId,
+        submission_id: gradingSubmission.id,
+        grade: Number(gradeValue),
+        feedback: gradeFeedback || null,
+      };
+      const res = await fetch(`${API_BASE}/users/courses/submissions/grade/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || `Failed: ${res.status}`);
+      // refresh current course data
+      if (selectedCourse) await openCourseModal(selectedCourse);
+      closeGradeModal();
+    } catch (err: any) {
+      setGradingError(err?.message || String(err));
+    } finally {
+      setGradingLoading(false);
+    }
+  }
+
   useEffect(() => {
     // If the URL (or navigation state) requests opening a specific course, auto-open it.
     // Allows InstructorDashboard to navigate to ?view=courses&course_db_id=... and have the course modal open.
@@ -581,26 +655,29 @@ export default function CoursesList(): JSX.Element {
     <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm dark:shadow-none text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate(-1)}
-            className="px-3 py-1 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700"
-          >
-            Back
-          </button>
-          <button
-            onClick={() => navigate('/instructor-dashboard?view=dashboard')}
-            className="px-3 py-1 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700"
-          >
-            Dashboard
-          </button>
+<button
+  onClick={() => navigate('/instructor-dashboard?view=dashboard')}
+  className="px-4 py-2 rounded-md 
+ dark:bg-slate-600 bg-indigo-700
+             text-slate-900 dark:text-slate-100 
+             border border-slate-300 dark:border-slate-600 
+             hover:bg-slate-300 dark:hover:bg-slate-500 
+             transition shadow-sm"
+>
+  Dashboard
+</button>
+
           <h3 className="text-lg font-medium text-slate-800 dark:text-slate-100 ml-3">My courses</h3>
         </div>
-        <button onClick={() => navigate('/instructor/create')} className="text-sm px-3 py-1 bg-indigo-600 text-white rounded-md">New course</button>
+        <button onClick={() => navigate('/instructor/create')} className="text-sm px-3 py-1 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 hover:shadow-md transition">New course</button>
       </div>
 
       <ul className="space-y-3">
         {courses.map((c) => (
-          <li key={c.id} className="border rounded-lg p-3 flex items-center justify-between hover:shadow-sm border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+          <li
+            key={c.id}
+            className="border rounded-lg p-3 flex items-center justify-between border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 hover:shadow-sm hover:-translate-y-0.5 transform transition cursor-pointer"
+          >
             <div>
               <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">{c.name}</div>
               <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">Code: <span className="font-mono">{c.course_id ?? '—'}</span></div>
@@ -618,15 +695,15 @@ export default function CoursesList(): JSX.Element {
                       // use view=courses (plural) so InstructorDashboard's view parsing picks this up
                       // this navigation is a user action that should create a history entry (push),
                       // so we keep the default (no replace).
-                      urlNavigate(`/instructor-dashboard?view=courses&course_db_id=${encodeURIComponent(c.id)}`, {
+                      navigate(`/instructor-dashboard?view=courses&course_db_id=${encodeURIComponent(c.id)}`, {
                         state: { course: c },
                       });
                     }}
-                    className="text-sm text-indigo-600 hover:underline"
+                    className="text-sm text-indigo-600 hover:underline hover:bg-indigo-50 dark:hover:bg-indigo-700 hover:shadow-sm transition px-2 py-1 rounded"
                   >
                     Open
                   </button>
-                  <button onClick={() => deleteCourse(c)} className="text-sm text-red-600 hover:underline">Delete</button>
+                  <button onClick={() => deleteCourse(c)} className="text-sm text-red-600 hover:underline hover:bg-red-50 dark:hover:bg-red-700 hover:shadow-sm transition px-2 py-1 rounded">Delete</button>
                 </div>
               </div>
             </div>
@@ -645,15 +722,23 @@ export default function CoursesList(): JSX.Element {
                 <div className="text-xs text-slate-500 mt-1">Instructor: {instructorEmail ?? '—'}</div>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => navigate(-1)} className="px-3 py-2 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">Back</button>
-                <button onClick={() => navigate('/instructor-dashboard?view=dashboard')} className="px-3 py-2 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">Dashboard</button>
-                <button onClick={() => { setSelectedCourse(null); setRequests(null); setStudents(null); }} className="px-3 py-2 border rounded-md">Close</button>
-                <button onClick={() => { /* optional: navigate to full course editor route later */ }} className="px-3 py-2 bg-indigo-600 text-white rounded-md">Open editor</button>
-                <button onClick={() => deleteCourse(selectedCourse)} className="px-3 py-2 bg-red-600 text-white rounded-md">Delete course</button>
-                {/* new quick-create buttons */}
-                <button onClick={() => setAddAssignOpen(true)} className="px-3 py-2 bg-green-600 text-white rounded-md">Add assignment</button>
-                <button onClick={() => { setResForm({ type: 'syllabus', title: '', content: '', video_url: '' }); setAddResOpen(true); }} className="px-3 py-2 bg-orange-600 text-white rounded-md">Add syllabus</button>
-                {/* 'Add resource' removed to avoid duplication with syllabus/video flow */}
+                <button onClick={() => navigate('/instructor-dashboard?view=dashboard')} className="px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 hover:shadow-md transition">Dashboard</button>
+                <button onClick={() => deleteCourse(selectedCourse)} className="px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 hover:shadow-md transition">Delete course</button>
+                {/* new quick-create buttons (uniform color) */}
+                <button onClick={() => setAddAssignOpen(true)} className="px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 hover:shadow-md transition">Add assignment</button>
+                <button onClick={() => { setResForm({ type: 'syllabus', title: '', content: '', video_url: '' }); setAddResOpen(true); }} className="px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 hover:shadow-md transition">Add syllabus</button>
+
+                {/* Create quiz (opens quiz builder with this course selected) */}
+                <button
+                  onClick={() => {
+                    navigate(`/instructor-dashboard?view=create-quiz&course_db_id=${encodeURIComponent(String(selectedCourse?.id))}`, {
+                      state: { course_db_id: selectedCourse?.id },
+                    });
+                  }}
+                  className="px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 hover:shadow-md transition"
+                >
+                  Create quiz
+                </button>
               </div>
             </div>
 
@@ -678,8 +763,8 @@ export default function CoursesList(): JSX.Element {
                         </div>
                         <div className="flex items-center gap-2">
                           <div className="text-xs text-slate-400 mr-2">{a.points ? `${a.points} pts` : ''}</div>
-                          <button onClick={() => openEditAssignment(a)} className="text-sm px-2 py-1 border rounded-md bg-white text-indigo-600">Edit</button>
-                          <button onClick={() => deleteAssignment(a)} className="text-sm px-2 py-1 border rounded-md bg-white text-red-600">Delete</button>
+                          <button onClick={() => openEditAssignment(a)} className="text-sm px-2 py-1 border rounded-md bg-white text-indigo-600 hover:bg-slate-50 dark:hover:bg-slate-700 hover:shadow-sm transition">Edit</button>
+                          <button onClick={() => deleteAssignment(a)} className="text-sm px-2 py-1 border rounded-md bg-white text-red-600 hover:bg-red-50 dark:hover:bg-red-700 hover:shadow-sm transition">Delete</button>
                         </div>
                       </div>
                       {/* render submissions for this assignment (if any) */}
@@ -696,7 +781,7 @@ export default function CoursesList(): JSX.Element {
                                 <div className="flex items-center gap-3">
                                   {s.file_url ? <a href={s.file_url} target="_blank" rel="noreferrer" className="text-indigo-600 text-sm">Download PDF</a> : <span className="text-xs text-slate-500">No file</span>}
                                   <div className="text-xs text-slate-400 dark:text-slate-400">{s.status ?? ''}</div>
-                                  <button onClick={() => openGradeModal(s)} className="px-3 py-1 bg-indigo-600 text-white rounded-md text-sm">Grade</button>
+                                  <button onClick={() => openGradeModal(s)} className="px-3 py-1 bg-indigo-600 text-white rounded-md text-sm hover:bg-indigo-700 hover:shadow-md transition">Grade</button>
                                 </div>
                               </li>
                             ))}
@@ -743,6 +828,70 @@ export default function CoursesList(): JSX.Element {
               )}
             </div>
 
+            {/* Quizzes list */}
+            <div className="mb-6 bg-white dark:bg-slate-800 rounded-lg p-4 shadow-sm dark:shadow-none border border-slate-200 dark:border-slate-700">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-medium">Quizzes</h4>
+                <div className="text-xs text-slate-500">{quizzes ? `${quizzes.length} total` : '—'}</div>
+              </div>
+              {quizzes && quizzes.length > 0 ? (
+                <ul className="space-y-2">
+                  {quizzes.map((q: any) => (
+                    <li key={q.id} className="border rounded p-3">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <div className="text-sm font-medium">{q.title}</div>
+                          <div className="text-xs text-slate-500">
+                            {q.total_points ?? 0} pts • {q.created_at ? new Date(q.created_at).toLocaleDateString() : ''}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => openEditQuiz(q)}
+                            className="text-xs px-2 py-1 border rounded bg-white text-indigo-600 hover:bg-slate-50 dark:hover:bg-slate-700 transition"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => deleteQuiz(q)}
+                            className="text-xs px-2 py-1 border rounded bg-white text-red-600 hover:bg-red-50 dark:hover:bg-red-700 transition"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                      <div className="mt-3">
+                        <h5 className="text-xs text-slate-500 mb-2">Submissions</h5>
+                        {Array.isArray(q.submissions) && q.submissions.length > 0 ? (
+                          <ul className="space-y-2">
+                            {q.submissions.map((s: any) => (
+                              <li key={s.id} className="flex items-center justify-between border rounded p-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+                                <div>
+                                  <div className="text-sm font-medium dark:text-slate-100">
+                                    {s.student?.email || s.student?.username || s.student_id}
+                                  </div>
+                                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                                    {s.submitted_at ? new Date(s.submitted_at).toLocaleString() : ''}
+                                  </div>
+                                </div>
+                                <div className="text-xs text-slate-600 dark:text-slate-300 font-semibold">
+                                  Score: {s.score} / {q.total_points ?? 0}
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <div className="text-sm text-slate-500">No submissions yet.</div>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-sm text-slate-500">No quizzes yet.</div>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Left: enrolled students */}
               <div className="lg:col-span-2 bg-white rounded-lg p-4 shadow-sm">
@@ -778,21 +927,13 @@ export default function CoursesList(): JSX.Element {
                           <div className="text-xs text-slate-500">{r.student?.username ? `(${r.student.username})` : ''}</div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <button onClick={() => respondToRequest(r.id, 'accept')} className="px-3 py-1 bg-green-600 text-white rounded-md text-sm">Accept</button>
-                          <button onClick={() => respondToRequest(r.id, 'reject')} className="px-3 py-1 bg-gray-200 text-slate-700 rounded-md text-sm">Reject</button>
+                          <button onClick={() => respondToRequest(r.id, 'accept')} className="px-3 py-1 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 hover:shadow-sm transition">Accept</button>
+                          <button onClick={() => respondToRequest(r.id, 'reject')} className="px-3 py-1 bg-gray-200 text-slate-700 rounded-md text-sm hover:bg-gray-300 dark:hover:bg-slate-700 hover:shadow-sm transition">Reject</button>
                         </div>
                       </li>
                     ))}
                   </ul>
                 )}
-
-                <div className="mt-6">
-                  <h5 className="text-sm font-medium mb-2">Quick actions</h5>
-                  <div className="flex flex-col gap-2">
-                    <button className="px-3 py-2 bg-indigo-600 text-white rounded-md">Download roster</button>
-                    <button className="px-3 py-2 border rounded-md" onClick={() => { /* placeholder for settings */ }}>Course settings</button>
-                  </div>
-                </div>
               </aside>
             </div>
           </div>
@@ -824,8 +965,8 @@ export default function CoursesList(): JSX.Element {
               </div>
             </div>
             <div className="mt-4 flex justify-end gap-2">
-              <button onClick={() => setAddAssignOpen(false)} className="px-3 py-1 border rounded">Cancel</button>
-              <button onClick={createAssignment} className="px-3 py-1 bg-indigo-600 text-white rounded">Create</button>
+              <button type="button" onClick={() => setAddAssignOpen(false)} className="px-3 py-1 border rounded hover:bg-slate-100 dark:hover:bg-slate-700 hover:shadow-sm transition">Cancel</button>
+              <button onClick={createAssignment} className="px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 hover:shadow-md transition">Create</button>
             </div>
           </div>
         </div>
@@ -859,8 +1000,8 @@ export default function CoursesList(): JSX.Element {
               </div>
             </div>
             <div className="mt-4 flex justify-end gap-2">
-              <button onClick={() => setEditAssignOpen(false)} className="px-3 py-1 border rounded">Cancel</button>
-              <button onClick={updateAssignment} className="px-3 py-1 bg-indigo-600 text-white rounded">Save changes</button>
+              <button onClick={() => setEditAssignOpen(false)} className="px-3 py-1 border rounded hover:bg-slate-100 dark:hover:bg-slate-700 hover:shadow-sm transition">Cancel</button>
+              <button onClick={updateAssignment} className="px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 hover:shadow-md transition">Save changes</button>
             </div>
           </div>
         </div>
@@ -928,37 +1069,39 @@ export default function CoursesList(): JSX.Element {
               )}
             </div>
             <div className="mt-4 flex justify-end gap-2">
-              <button onClick={() => setEditResOpen(false)} className="px-3 py-1 border rounded">Cancel</button>
-              <button onClick={async () => {
-                // submit update
-                try {
-                  setError(null);
-                  const { data: sessionData } = await supabase.auth.getSession();
-                  const instructorId = sessionData?.session?.user?.id;
-                  if (!instructorId) throw new Error('Not authenticated');
-                  const payload: any = {
-                    instructor_id: instructorId,
-                    resource_id: editingResource.id,
-                    title: editResForm.title,
-                    type: editResForm.type,
-                  };
-                  if (editResForm.type === 'syllabus') payload.content = editResForm.content;
-                  else payload.video_url = editResForm.video_url;
-                  const res = await fetch(`${API_BASE}/users/courses/resources/update/`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                  });
-                  const body = await res.json().catch(() => ({}));
-                  if (!res.ok) throw new Error(body?.error || `Update failed: ${res.status}`);
-                  // refresh modal data
-                  if (selectedCourse) await openCourseModal(selectedCourse);
-                  setEditResOpen(false);
-                  setEditingResource(null);
-                } catch (err: any) {
-                  setError(err?.message || String(err));
-                }
-              }} className="px-3 py-1 bg-indigo-600 text-white rounded">Save changes</button>
+              <button onClick={() => setEditResOpen(false)} className="px-3 py-1 border rounded hover:bg-slate-100 dark:hover:bg-slate-700 hover:shadow-sm transition">Cancel</button>
+              <button onClick={updateResource} className="px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 hover:shadow-md transition">Save changes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Quiz Modal */}
+      {editQuizOpen && editingQuiz && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={closeEditQuiz} />
+          <div className="relative bg-white dark:bg-slate-800 rounded-lg shadow-lg dark:shadow-none w-full max-w-md p-6 z-50 border border-slate-200 dark:border-slate-700">
+            <h3 className="text-lg font-semibold mb-3">Edit quiz</h3>
+            <div className="space-y-3">
+              <input
+                value={editQuizForm.title}
+                onChange={(e) => setEditQuizForm(s => ({ ...s, title: e.target.value }))}
+                placeholder="Title"
+                className="w-full border px-2 py-1 rounded"
+              />
+              <textarea
+                value={editQuizForm.questions}
+                onChange={(e) => setEditQuizForm(s => ({ ...s, questions: e.target.value }))}
+                placeholder='Questions JSON (e.g. [{"text":"Q1","options":["A","B"],"correctIndex":0}] )'
+                className="w-full border px-2 py-2 rounded h-40 text-xs font-mono"
+              />
+              <div className="text-xs text-slate-500">
+                Leave questions blank to keep existing set. Provide a JSON array to replace.
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={closeEditQuiz} className="px-3 py-1 border rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition">Cancel</button>
+              <button onClick={updateQuiz} className="px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition">Save</button>
             </div>
           </div>
         </div>
@@ -984,8 +1127,8 @@ export default function CoursesList(): JSX.Element {
               {gradingError && <div className="text-sm text-red-600">{gradingError}</div>}
             </div>
             <div className="mt-4 flex justify-end gap-2">
-              <button onClick={closeGradeModal} className="px-3 py-1 border rounded">Cancel</button>
-              <button onClick={submitGrade} disabled={gradingLoading} className="px-3 py-1 bg-indigo-600 text-white rounded">{gradingLoading ? 'Saving…' : 'Save grade'}</button>
+              <button onClick={closeGradeModal} className="px-3 py-1 border rounded hover:bg-slate-100 dark:hover:bg-slate-700 hover:shadow-sm transition">Cancel</button>
+              <button onClick={submitGrade} disabled={gradingLoading} className="px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 hover:shadow-md transition">{gradingLoading ? 'Saving…' : 'Save grade'}</button>
             </div>
           </div>
         </div>
@@ -998,9 +1141,9 @@ export default function CoursesList(): JSX.Element {
           <div className="relative bg-white dark:bg-slate-800 rounded-lg shadow-lg dark:shadow-none w-full max-w-md p-6 z-50 border border-slate-200 dark:border-slate-700">
             <h3 className="text-lg font-semibold mb-3">{confirmTitle}</h3>
             <div className="text-sm text-slate-600 mb-4">{confirmMessage}</div>
-            <div className="flex justify-end gap-2">
-              <button onClick={cancelConfirm} className="px-3 py-1 border rounded">Cancel</button>
-              <button onClick={() => runConfirm()} className="px-3 py-1 bg-red-600 text-white rounded">Confirm</button>
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={cancelConfirm} className="px-3 py-1 border rounded hover:bg-slate-100 dark:hover:bg-slate-700 hover:shadow-sm transition">Cancel</button>
+              <button onClick={() => runConfirm()} className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 hover:shadow-md transition">Confirm</button>
             </div>
           </div>
         </div>

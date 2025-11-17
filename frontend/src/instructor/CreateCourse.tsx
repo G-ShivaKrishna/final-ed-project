@@ -72,7 +72,6 @@ export default function CreateCourse() {
     <div className="max-w-2xl mx-auto">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <button onClick={() => navigate(-1)} className="px-3 py-1 border rounded-md">Back</button>
           <button onClick={() => navigate('/instructor-dashboard')} className="px-3 py-1 border rounded-md">Dashboard</button>
         </div>
       </div>
