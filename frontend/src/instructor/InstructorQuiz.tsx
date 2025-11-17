@@ -101,24 +101,68 @@ export default function InstructorQuiz(): JSX.Element {
 
       <div className="space-y-4">
         {questions.map((q, qi) => (
-          <div key={qi} className="border p-3 rounded">
+          <div
+            key={qi}
+            className="relative bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4 pl-5"
+          >
+            {/* left indigo accent */}
+            <span className="absolute left-0 top-0 h-full w-1.5 bg-indigo-600 rounded-l-lg" aria-hidden />
+
             <div className="flex items-start justify-between">
               <div className="w-full">
-                <label className="text-xs text-slate-600">Question {qi + 1}</label>
-                <input value={q.text} onChange={e => updateQuestion(qi, { text: e.target.value })} className="w-full border px-2 py-1 rounded mt-1" />
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
-                  {q.options.map((opt, oi) => (
-                    <div key={oi} className="flex items-center gap-2">
-                      <input className="w-full border px-2 py-1 rounded" value={opt} onChange={e => {
-                        const newOpts = [...q.options]; newOpts[oi] = e.target.value; updateQuestion(qi, { options: newOpts });
-                      }} />
-                      <label className="text-xs"><input type="radio" checked={q.correctIndex === oi} onChange={() => updateQuestion(qi, { correctIndex: oi })} /> correct</label>
-                    </div>
-                  ))}
+                {/* indigo badge for question number */}
+                <div className="mb-2">
+                  <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-700 rounded">
+                    Question {qi + 1}
+                  </span>
+                </div>
+
+                <input
+                  value={q.text}
+                  onChange={e => updateQuestion(qi, { text: e.target.value })}
+                  className="w-full border px-2 py-1 rounded mt-1"
+                  placeholder="Enter question text"
+                />
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
+                  {q.options.map((opt, oi) => {
+                    const selected = q.correctIndex === oi;
+                    return (
+                      <div key={oi} className="flex items-center justify-between gap-2 border border-slate-200 dark:border-slate-700 rounded px-2 py-1">
+                        <input
+                          className="w-full border px-2 py-1 rounded"
+                          value={opt}
+                          onChange={e => {
+                            const newOpts = [...q.options];
+                            newOpts[oi] = e.target.value;
+                            updateQuestion(qi, { options: newOpts });
+                          }}
+                          placeholder={`Option ${oi + 1}`}
+                        />
+                        <label className={`text-xs ml-2 ${selected ? 'text-indigo-600 font-medium' : ''}`}>
+                          <input
+                            type="radio"
+                            className="mr-1 align-middle"
+                            checked={selected}
+                            onChange={() => updateQuestion(qi, { correctIndex: oi })}
+                          />
+                          correct
+                        </label>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
+
               <div className="ml-3">
-                <button type="button" onClick={() => removeQuestion(qi)} disabled={questions.length === 1} className="px-2 py-1 text-sm border rounded text-red-600 hover:bg-red-50 transition">Remove</button>
+                <button
+                  type="button"
+                  onClick={() => removeQuestion(qi)}
+                  disabled={questions.length === 1}
+                  className="px-2 py-1 text-sm border rounded text-red-600 hover:bg-red-50 transition"
+                >
+                  Remove
+                </button>
               </div>
             </div>
           </div>
@@ -126,7 +170,7 @@ export default function InstructorQuiz(): JSX.Element {
       </div>
 
       <div className="mt-3 flex items-center gap-2">
-        <button type="button" onClick={addQuestion} disabled={questions.length >= 10} className="px-3 py-1 bg-gray-100 rounded hover:bg-gray-200 transition">Add question</button>
+        <button type="button" onClick={addQuestion} disabled={questions.length >= 10} className="px-3 py-1 bg-indigo-600  rounded hover:bg-indigo-750  transition">Add question</button>
         <button type="button" onClick={submitQuiz} disabled={saving} className="px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition">{saving ? 'Saving…' : 'Create quiz'}</button>
         <button type="button" onClick={() => navigate(-1)} className="px-3 py-1 border rounded hover:shadow-sm transition">Back</button>
       </div>

@@ -184,7 +184,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
         { url: `${API_BASE}/users/courses/assignments/${id}/`, method: 'PATCH', body: payload },
         { url: `${API_BASE}/users/assignments/${id}/`, method: 'PATCH', body: payload },
         { url: `${API_BASE}/users/courses/assignments/update/`, method: 'POST', body: { assignment_id: id, ...payload } },
-        { url: `${API_BASE}/users/assignments/update/`, method: 'POST', body: { assignment_id: id, ...payload } },
+        { url: `${API_BASE}/users/courses/assignments/update/`, method: 'POST', body: { assignment_id: id, ...payload } },
       ];
 
       let success = false;
@@ -1131,8 +1131,7 @@ export default function InstructorDashboard({ onLogout }: { onLogout: () => void
                                 >
                                   Grade
                                 </button>
-                                <button onClick={() => openEditDue(a)} className="ml-2 text-sm px-2 py-1 border rounded-md bg-white text-indigo-600 hover:shadow-sm transition">Edit due</button>
-                              </div>
+                                </div>
                             </div>
                           </article>
                         ))}

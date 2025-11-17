@@ -655,12 +655,18 @@ export default function CoursesList(): JSX.Element {
     <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm dark:shadow-none text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate('/instructor-dashboard?view=dashboard')}
-            className="px-3 py-1 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 hover:shadow-sm transition"
-          >
-            Dashboard
-          </button>
+<button
+  onClick={() => navigate('/instructor-dashboard?view=dashboard')}
+  className="px-4 py-2 rounded-md 
+ dark:bg-slate-600 bg-indigo-700
+             text-slate-900 dark:text-slate-100 
+             border border-slate-300 dark:border-slate-600 
+             hover:bg-slate-300 dark:hover:bg-slate-500 
+             transition shadow-sm"
+>
+  Dashboard
+</button>
+
           <h3 className="text-lg font-medium text-slate-800 dark:text-slate-100 ml-3">My courses</h3>
         </div>
         <button onClick={() => navigate('/instructor/create')} className="text-sm px-3 py-1 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 hover:shadow-md transition">New course</button>
@@ -729,13 +735,10 @@ export default function CoursesList(): JSX.Element {
                       state: { course_db_id: selectedCourse?.id },
                     });
                   }}
-                  className="px-3 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 hover:shadow-md transition"
+                  className="px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 hover:shadow-md transition"
                 >
                   Create quiz
                 </button>
-
-                {/* Copyable student-facing quiz list URL */}
-                <CopyStudentLinkButton courseId={selectedCourse?.id} />
               </div>
             </div>
 
@@ -1145,33 +1148,6 @@ export default function CoursesList(): JSX.Element {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-// Small helper component: copy student quiz URL to clipboard
-function CopyStudentLinkButton({ courseId }: { courseId?: string | number | undefined }) {
-  const [copied, setCopied] = useState(false);
-  if (!courseId) return null;
-  const url = `${window.location.origin}/student/quizzes?course_db_id=${encodeURIComponent(String(courseId))}`;
-  return (
-    <div>
-      <button
-        onClick={async () => {
-          try {
-            await navigator.clipboard.writeText(url);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2500);
-          } catch {
-            // fallback
-            void alert('Copy URL: ' + url);
-          }
-        }}
-        className="px-3 py-2 bg-slate-100 text-slate-800 rounded-md hover:bg-slate-200 transition"
-        title="Copy student quiz link"
-      >
-        {copied ? 'Copied' : 'Copy student link'}
-      </button>
     </div>
   );
 }
