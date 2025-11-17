@@ -171,7 +171,19 @@ export default function CourseDetail(): JSX.Element {
           const json = await res.json().catch(()=>[]);
           if (res.ok) {
             const list = Array.isArray(json) ? json : (json.quizzes ?? []);
-            if (!cancelled) setQuizzes(list);
+            const normalized = list.map((q: any) => {
+              let questions = q.questions;
+              if (!Array.isArray(questions) && typeof questions === 'string') {
+                try {
+                  const parsed = JSON.parse(questions);
+                  if (Array.isArray(parsed)) questions = parsed;
+                  else questions = [];
+                } catch { questions = []; }
+              }
+              if (!Array.isArray(questions)) questions = [];
+              return { ...q, questions };
+            });
+            setQuizzes(normalized);
           } else if (!cancelled) setQuizzes([]);
         }
       } catch (e:any) {
@@ -194,7 +206,14 @@ export default function CourseDetail(): JSX.Element {
       const j = await res.json().catch(()=>null);
       if (!res.ok) throw new Error(j?.error || `Failed to load quiz`);
       const q = j.quiz ?? j;
-      const questions = Array.isArray(q.questions) ? q.questions : [];
+      let questions = q.questions;
+      if (!Array.isArray(questions) && typeof questions === 'string') {
+        try {
+          const parsed = JSON.parse(questions);
+          if (Array.isArray(parsed)) questions = parsed; else questions = [];
+        } catch { questions = []; }
+      }
+      if (!Array.isArray(questions)) questions = [];
       setActiveQuiz({ id: q.id, title: q.title, questions });
       setQuizAnswers(Array(questions.length).fill(-1));
     } catch (e:any) {
@@ -535,7 +554,7 @@ export default function CourseDetail(): JSX.Element {
                   <li key={q.id} className="p-3 border rounded flex items-center justify-between">
                     <div>
                       <div className="font-medium">{q.title}</div>
-                      <div className="text-xs text-slate-500">{q.questions ? `${q.questions.length} question(s)` : ''}</div>
+                      <div className="text-xs text-slate-500">{Array.isArray(q.questions) ? `${q.questions.length} question(s)` : '0 questions'}</div>
                     </div>
                     <button onClick={() => openQuiz(q.id)} className="px-3 py-1 bg-indigo-600 text-white rounded text-sm">Open quiz</button>
                   </li>

@@ -1234,6 +1234,14 @@ def list_quizzes(request):
         for r in rows:
             q = dict(zip(cols, r))
             q['id'] = str(q['id'])
+            # NEW: parse questions JSON if stored as text
+            if isinstance(q.get('questions'), str):
+                try:
+                    parsed = json.loads(q['questions'])
+                    if isinstance(parsed, list):
+                        q['questions'] = parsed
+                except:
+                    q['questions'] = []
             quizzes.append(q)
         return JsonResponse({'quizzes': quizzes})
     except Exception as e:
@@ -1249,6 +1257,14 @@ def get_quiz(request, quiz_id):
             cols = [col[0] for col in cur.description]
             q = dict(zip(cols, row))
             q['id'] = str(q['id'])
+            # NEW: parse questions JSON if needed
+            if isinstance(q.get('questions'), str):
+                try:
+                    parsed = json.loads(q['questions'])
+                    if isinstance(parsed, list):
+                        q['questions'] = parsed
+                except:
+                    q['questions'] = []
         return JsonResponse({'quiz': q})
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
