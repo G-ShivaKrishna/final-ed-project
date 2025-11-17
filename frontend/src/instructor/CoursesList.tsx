@@ -45,6 +45,10 @@ export default function CoursesList(): JSX.Element {
   const [editResOpen, setEditResOpen] = useState(false);
   const [editingResource, setEditingResource] = useState<any | null>(null);
   const [editResForm, setEditResForm] = useState({ title: '', content: '', video_url: '', type: 'syllabus' as 'syllabus' | 'video' });
+  // quiz edit state
+  const [editQuizOpen, setEditQuizOpen] = useState(false);
+  const [editingQuiz, setEditingQuiz] = useState<any | null>(null);
+  const [editQuizForm, setEditQuizForm] = useState({ title: '', questions: '' }); // questions as JSON string
 
   const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
 
@@ -810,14 +814,27 @@ export default function CoursesList(): JSX.Element {
                 <ul className="space-y-2">
                   {quizzes.map((q: any) => (
                     <li key={q.id} className="border rounded p-3">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-start justify-between">
                         <div>
                           <div className="text-sm font-medium">{q.title}</div>
                           <div className="text-xs text-slate-500">
                             {q.total_points ?? 0} pts • {q.created_at ? new Date(q.created_at).toLocaleDateString() : ''}
                           </div>
                         </div>
-                        <div className="text-xs text-slate-400">{Array.isArray(q.questions) ? `${q.questions.length} question(s)` : '0 questions'}</div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => openEditQuiz(q)}
+                            className="text-xs px-2 py-1 border rounded bg-white text-indigo-600 hover:bg-slate-50 dark:hover:bg-slate-700 transition"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => deleteQuiz(q)}
+                            className="text-xs px-2 py-1 border rounded bg-white text-red-600 hover:bg-red-50 dark:hover:bg-red-700 transition"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </div>
                       <div className="mt-3">
                         <h5 className="text-xs text-slate-500 mb-2">Submissions</h5>
@@ -1030,6 +1047,37 @@ export default function CoursesList(): JSX.Element {
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => setEditResOpen(false)} className="px-3 py-1 border rounded hover:bg-slate-100 dark:hover:bg-slate-700 hover:shadow-sm transition">Cancel</button>
               <button onClick={updateResource} className="px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 hover:shadow-md transition">Save changes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Quiz Modal */}
+      {editQuizOpen && editingQuiz && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={closeEditQuiz} />
+          <div className="relative bg-white dark:bg-slate-800 rounded-lg shadow-lg dark:shadow-none w-full max-w-md p-6 z-50 border border-slate-200 dark:border-slate-700">
+            <h3 className="text-lg font-semibold mb-3">Edit quiz</h3>
+            <div className="space-y-3">
+              <input
+                value={editQuizForm.title}
+                onChange={(e) => setEditQuizForm(s => ({ ...s, title: e.target.value }))}
+                placeholder="Title"
+                className="w-full border px-2 py-1 rounded"
+              />
+              <textarea
+                value={editQuizForm.questions}
+                onChange={(e) => setEditQuizForm(s => ({ ...s, questions: e.target.value }))}
+                placeholder='Questions JSON (e.g. [{"text":"Q1","options":["A","B"],"correctIndex":0}] )'
+                className="w-full border px-2 py-2 rounded h-40 text-xs font-mono"
+              />
+              <div className="text-xs text-slate-500">
+                Leave questions blank to keep existing set. Provide a JSON array to replace.
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={closeEditQuiz} className="px-3 py-1 border rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition">Cancel</button>
+              <button onClick={updateQuiz} className="px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition">Save</button>
             </div>
           </div>
         </div>
