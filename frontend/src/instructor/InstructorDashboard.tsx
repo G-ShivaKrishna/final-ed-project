@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Calendar, CheckCircle, Clock, MoreVertical, User, XCircle, Sun, Moon } from 'lucide-react';
+import { CheckCircle, Clock, MoreVertical, User, XCircle, Sun, Moon } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import ChatBox from '../student/ChatBot';
 import CreateCourse from './CreateCourse';

@@ -232,23 +232,74 @@ export default function CoursesList(): JSX.Element {
 
       // fetch assignments for this course (instructor view)
       try {
-        const ares = await fetch(`${API_BASE}/users/courses/assignments/?course_db_id=${encodeURIComponent(course.id)}&user_id=${encodeURIComponent(instructorId)}`);
+        const ares = await fetch(
+          `${API_BASE}/users/courses/assignments/?course_db_id=${encodeURIComponent(
+            course.id,
+          )}&user_id=${encodeURIComponent(instructorId)}`,
+        );
         const ajson = await ares.json().catch(() => []);
         if (ares.ok) {
           // normalize incoming assignment rows: ensure due_date is ISO and course.code exists
-          // keep normalized assignments in a local var so we can attach submissions below
           const normalizedAssignments = (ajson || []).map((a: any) => {
-            if (a.course && !a.course.code) a.course.code = a.course.course_id || a.course.courseId || a.course.code;
+            if (a.course && !a.course.code)
+              a.course.code = a.course.course_id || a.course.courseId || a.course.code;
             if (a.due_date) {
               try {
                 a.due_date = new Date(a.due_date).toISOString();
-              } catch (_) { /* leave as-is */ }
+              } catch {
+                /* leave as-is */
+              }
             }
             return a;
           });
-          // set state from the normalized local copy
+
+          // --- NEW: attach submissions to each assignment ---
+          try {
+            const sres = await fetch(
+              `${API_BASE}/users/courses/submissions/?course_db_id=${encodeURIComponent(
+                course.id,
+              )}&instructor_id=${encodeURIComponent(instructorId)}`,
+            );
+            const sjson = await sres.json().catch(() => []);
+            if (sres.ok && Array.isArray(sjson)) {
+              const submissions: any[] = sjson;
+              // index by assignment_id
+              const byAssignment = new Map<string, any[]>();
+              submissions.forEach((s) => {
+                const aid = String(s.assignment_id);
+                const arr = byAssignment.get(aid) || [];
+                arr.push(s);
+                byAssignment.set(aid, arr);
+              });
+              // attach to assignments, normalize student + assignment_title
+              normalizedAssignments.forEach((a: any) => {
+                const aid = String(a.id);
+                const subs = byAssignment.get(aid) || [];
+                a.submissions = subs.map((s) => ({
+                  ...s,
+                  // backend already normalizes student and assignment_title in list_course_submissions
+                  student: s.student ?? null,
+                  assignment_title: s.assignment_title ?? a.title ?? '',
+                }));
+              });
+            } else {
+              // no submissions or error – still ensure property exists
+              normalizedAssignments.forEach((a: any) => {
+                if (!Array.isArray(a.submissions)) a.submissions = [];
+              });
+            }
+          } catch {
+            // on failure, keep assignments but no submissions
+            normalizedAssignments.forEach((a: any) => {
+              if (!Array.isArray(a.submissions)) a.submissions = [];
+            });
+          }
+          // --- END NEW ---
+
           setAssignments(normalizedAssignments);
-        } else setAssignments([]);
+        } else {
+          setAssignments([]);
+        }
       } catch {
         setAssignments([]);
       }
