@@ -5,6 +5,9 @@ export default function CreateCourseForm(): JSX.Element {
   const [courseName, setCourseName] = useState('');
   const [courseId, setCourseId] = useState('');
   const [message, setMessage] = useState('');
+  // NEW: store generated code + copy status
+  const [createdCode, setCreatedCode] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<string>('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,15 +37,34 @@ export default function CreateCourseForm(): JSX.Element {
 
       if (response.ok) {
         setMessage(data.message || 'Course created successfully!');
+        // backend returns full course row; prefer course_id / code from response
+        const code = data.course_id || data.code || courseId || '';
+        setCreatedCode(code || null);
         setCourseName('');
         setCourseId('');
+        setCopyStatus('');
       } else {
         setMessage(data.error || data.message || 'Error creating course.');
+        setCreatedCode(null);
+        setCopyStatus('');
       }
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error(error);
       setMessage('Network error: could not create course.');
+      setCreatedCode(null);
+      setCopyStatus('');
+    }
+  };
+
+  // NEW: copy helper
+  const handleCopyCode = async () => {
+    if (!createdCode) return;
+    try {
+      await navigator.clipboard.writeText(createdCode);
+      setCopyStatus('Code copied to clipboard.');
+    } catch {
+      setCopyStatus('Unable to copy. Please copy manually.');
     }
   };
 
@@ -70,7 +92,22 @@ export default function CreateCourseForm(): JSX.Element {
         </div>
         <button type="submit">Create Course</button>
       </form>
+
       {message && <p>{message}</p>}
+
+      {/* NEW: show generated code + copy button */}
+      {createdCode && (
+        <div style={{ marginTop: '0.75rem' }}>
+          <p>
+            Course code:&nbsp;
+            <strong>{createdCode}</strong>
+          </p>
+          <button type="button" onClick={handleCopyCode}>
+            Copy code
+          </button>
+          {copyStatus && <p style={{ fontSize: '0.85rem' }}>{copyStatus}</p>}
+        </div>
+      )}
     </div>
   );
 }

@@ -27,31 +27,51 @@ export default function CoursesPage(): JSX.Element {
     async function load() {
       setLoading(true);
       try {
-        // fetch all courses (adjust select fields if you store different column names)
+        // get current user id
+        const { data: sessionData } = await supabase.auth.getSession();
+        const userId = sessionData?.session?.user?.id;
+        if (!userId) {
+          if (mounted) {
+            setCourses([]);
+            setJoinedCodes(new Set());
+          }
+          return;
+        }
+
+        // 1) fetch enrollments for this student (enrollments.course_id stores the course code text)
+        const { data: enrollRows, error: enrollErr } = await supabase
+          .from('enrollments')
+          .select('course_id')
+          .eq('student_id', userId);
+        if (enrollErr) throw enrollErr;
+
+        const joinedCodesArr = (enrollRows || [])
+          .map((r: any) => r.course_id)
+          .filter((c: string | null | undefined) => !!c) as string[];
+
+        const joinedSet = new Set<string>(joinedCodesArr);
+
+        if (!joinedCodesArr.length) {
+          if (mounted) {
+            setJoinedCodes(joinedSet);
+            setCourses([]);
+          }
+          return;
+        }
+
+        // 2) fetch only courses whose course_id is in the student's joined course codes
         const { data: courseRows, error: courseErr } = await supabase
           .from('courses')
           .select('id, course_id, name')
+          .in('course_id', joinedCodesArr)
           .order('created_at', { ascending: false });
         if (courseErr) throw courseErr;
 
-        // get current user id to fetch enrollments
-        const { data: sessionData } = await supabase.auth.getSession();
-        const userId = sessionData?.session?.user?.id;
-
-        let joinedSet = new Set<string>();
-        if (userId) {
-          const { data: enrollRows, error: enrollErr } = await supabase
-            .from('enrollments')
-            .select('course_id')
-            .eq('student_id', userId);
-          if (!enrollErr && Array.isArray(enrollRows)) {
-            enrollRows.forEach((r: any) => { if (r.course_id) joinedSet.add(r.course_id); });
-          }
-        }
-
         if (!mounted) return;
+
         setJoinedCodes(joinedSet);
-        // map DB rows to local Course shape; instructor/students/color can be enriched later
+
+        // map DB rows to local Course shape
         const mapped = (courseRows || []).map((r: any) => ({
           id: r.id,
           code: r.course_id ?? '',
@@ -62,7 +82,11 @@ export default function CoursesPage(): JSX.Element {
         }));
         setCourses(mapped);
       } catch (err) {
-        console.error('Failed to load courses/enrollments', err);
+        console.error('Failed to load joined courses', err);
+        if (mounted) {
+          setCourses([]);
+          setJoinedCodes(new Set());
+        }
       } finally {
         if (mounted) setLoading(false);
       }

@@ -10,6 +10,7 @@ export default function CreateCourse() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [courseCode, setCourseCode] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<string>('');
   const navigate = useNavigate();
 
   const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
@@ -20,14 +21,13 @@ export default function CreateCourse() {
     setError(null);
     setSuccess(false);
     setCourseCode(null);
+    setCopyStatus('');
 
     try {
-      // get current user id from supabase auth
       const { data: sessionData } = await supabase.auth.getSession();
       const instructorId = sessionData?.session?.user?.id;
       if (!instructorId) throw new Error('Not authenticated');
 
-      // call backend endpoint which generates unique course_id server-side
       const res = await fetch(`${API_BASE}/users/courses/create/`, {
         method: 'POST',
         headers: {
@@ -42,29 +42,33 @@ export default function CreateCourse() {
       const body = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        // surface backend error message if present
         const msg = (body && (body.error || body.details || JSON.stringify(body))) || `Request failed with status ${res.status}`;
         console.error('CreateCourse API error:', msg, body);
         throw new Error(msg);
       }
 
-      // backend returns the inserted course row with course_id (and 'code' alias)
       const returned = body || {};
       const finalCourseId = returned.course_id || returned.courseId || returned.code || null;
 
       setSuccess(true);
       setCourseCode(finalCourseId);
       setFormData({ name: '' });
-
-      // auto-navigate back to instructor dashboard after a short delay so user sees success
-      setTimeout(() => {
-        try { navigate('/instructor-dashboard'); } catch { /* ignore */ }
-      }, 1400);
     } catch (err) {
       console.error('CreateCourse failed', err);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCopyCode = async () => {
+    if (!courseCode) return;
+    try {
+      await navigator.clipboard.writeText(courseCode);
+      setCopyStatus('Code copied to clipboard.');
+      navigate('/instructor-dashboard');
+    } catch {
+      setCopyStatus('Unable to copy. Please copy manually.');
     }
   };
 
@@ -85,6 +89,18 @@ export default function CreateCourse() {
               Course code: <span className="font-mono font-bold">{courseCode}</span>
             </div>
             <p className="text-sm text-green-600 mt-1">Share this code with your students to let them join the course.</p>
+            <button
+              type="button"
+              onClick={handleCopyCode}
+              className="mt-3 px-3 py-1 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+            >
+              Copy code & go to dashboard
+            </button>
+            {copyStatus && (
+              <div className="mt-1 text-xs text-green-700">
+                {copyStatus}
+              </div>
+            )}
           </div>
         )}
 
